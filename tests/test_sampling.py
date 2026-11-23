@@ -188,7 +188,7 @@ def _bimodal_logdensity(mu=_HOP_MU, sigma=_HOP_SIGMA, w1=_HOP_W1):
     deviations, far enough that a locally-tuned Gaussian RWM proposal never
     crosses in any practically reachable chain length (see
     ``test_rwm_plain_cannot_cross_bimodal_valley`` below), yet cheap enough
-    for a unit test (a single scalar coordinate, no jaxnu/model machinery).
+    for a unit test (a single scalar coordinate, no mango/model machinery).
     """
     log_w1 = jnp.log(w1)
     log_w2 = jnp.log1p(-w1)

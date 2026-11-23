@@ -33,7 +33,7 @@ RWM. It is organised as plain functions: every object is a frozen dataclass
 pytree or a pure function, and the whole analysis is composed at the top by
 about ten lines of user code (see [Quick start](#quick-start)).
 
-[MANGO](https://github.com/pgranger23/mango-osc) (the differentiable oscillation-probability engine, `jaxnu` on PyPI)
+[MANGO](https://github.com/pgranger23/mango-osc) (the differentiable oscillation-probability engine, `mango-osc` on PyPI, imported as `mango`)
 does the oscillation physics; BANANA is the fitting layer built on top of it.
 
 ---
@@ -65,16 +65,18 @@ Laplace-proposal RWM (`algorithm="rwm"`), both built in. (The toy
 NUTS-vs-RWM ranking in `benchmarks/NUTS_TUNING.md` is withdrawn: its RWM ran
 at acceptance 0.69–0.75 with 15–250-sample chains; see the note at its top.)
 
-At full scale the toy points the same way
-([`examples/LARGE_FIT_REPORT.md`](examples/LARGE_FIT_REPORT.md): 400,000
-events, 4 samples, 17 free parameters — all recovered within 1σ of Asimov
-truth): naive step-size adaptation develops a stiff-direction pathology
-(runaway tree depths, 45% divergences) that the `max_num_doublings` cap and
-a lower `target_acceptance_rate` tame (3% divergences, bounded cost), but a
-well-tuned Laplace-proposal RWM still delivers ~2× the ESS/s of NUTS there
-on CPU. Both sampler families share one driver and one tuned proposal
-source, so switching between them is a one-argument change — use whichever
-wins for your posterior, and re-measure when moving to GPU.
+At 400,000 events ([`examples/LARGE_FIT_REPORT.md`](examples/LARGE_FIT_REPORT.md): 4 samples,
+17 free parameters) the MAP fit and the Laplace covariance recover every parameter within 1σ
+of the Asimov truth. NUTS with step-size-only warmup hits a stiff-direction pathology there
+(runaway tree depths, 45% divergences), which the `max_num_doublings` cap and a lower
+`target_acceptance_rate` tame (3% divergences, bounded cost). Sampling is the hard part at
+this scale: a long random-walk run (4 × 80,000 draws) still mixes slowly along the
+θ₂₃–Δm²₃₁ direction (effective sample size about 45 there;
+`examples/figures/large/corner_osc_params_rwm10x.png`). That report's NUTS-vs-RWM ESS/s
+comparison is withdrawn: neither sampler had converged in it
+(NUTS ran with 3 warmup steps and reached a minimum ESS of 22, RWM a minimum ESS of 8). Both
+sampler families share one driver and one tuned proposal source, so switching between them is
+a one-argument change.
 
 ---
 
@@ -83,7 +85,7 @@ wins for your posterior, and re-measure when moving to GPU.
 ```bash
 git clone https://github.com/pgranger23/banana-fit
 cd banana-fit
-pip install -e .            # core: jax, numpy, scipy, jaxnu (MANGO), blackjax, numpyro, h5py
+pip install -e .            # core: jax, numpy, scipy, mango-osc (MANGO), blackjax, numpyro, h5py
 pip install -e ".[report]"  # + arviz, matplotlib (diagnostics/plots/examples)
 pip install -e ".[extras]"  # + jax-tqdm, optax (progress bars, MAP pre-fit)
 pip install -e ".[root]"    # + uproot (ROOT TSpline3 import, bananafit.root_import)
@@ -91,7 +93,7 @@ pip install -e ".[test]"    # + pytest
 ```
 
 Requires Python ≥ 3.12 (CI tests 3.12 and 3.13) and [MANGO](https://github.com/pgranger23/mango-osc)
-(`jaxnu>=0.2` on PyPI, installed as a dependency). Float64 is mandatory for oscillation phases and is enabled
+(`mango-osc>=0.3` on PyPI, imported as `mango`, installed as a dependency). Float64 is mandatory for oscillation phases and is enabled
 automatically on `import bananafit`, exactly as in MANGO.
 
 ---
@@ -158,9 +160,9 @@ idata = bananafit.to_arviz(run, parameter_set=parameter_set)  # for corner/trace
 ```
 
 This exact snippet was run end-to-end on this machine (CPU): MAP fit in
-22 s, the one-time Laplace Hessian in 56 s, and 2×30 total NUTS steps giving
-sane per-parameter R-hat (~0.97–1.05) and ESS (~14–44). `n_warmup`/`n_samples`
-here are deliberately tiny for a fast demo — `examples/dune_toy_fit.py` runs
+22 s, the one-time Laplace Hessian in 56 s, then 2 × 30 NUTS steps: a check that the
+pipeline runs, far too short for a converged posterior (see [Validation](#validation) for
+one). `n_warmup`/`n_samples` are deliberately tiny for a fast demo — `examples/dune_toy_fit.py` runs
 the DUNE-ballpark-scale version (MAP, Laplace, NUTS *and* RWM, four saved
 figures, an HDF5 round-trip demo): `--quick` for a ~5–6 minute smoke run, no
 flag for the full multi-chain fit (tens of minutes on CPU).
@@ -177,7 +179,7 @@ bananafit/
   norms.py         normalization systematics (masked multiplicative weights)
   shifts.py        FD reconstructed-energy shift systematics + differentiable binning
   parameters.py    ParamSpec/ParameterSet, transforms, priors
-  oscillation.py   per-event oscillation weights via jaxnu
+  oscillation.py   per-event oscillation weights via MANGO
   model.py         ForwardModel: weights -> binned prediction
   likelihood.py    binned test statistics (Poisson, Barlow-Beeston-lite)
   posterior.py     logdensity assembly
@@ -185,7 +187,7 @@ bananafit/
   diagnostics.py   R-hat/ESS, arviz conversion, summaries
   io.py            HDF5 read/write of samples + splines
   root_import.py   ROOT TSpline3 import: MaCh3/T2K/DUNE spline-monolith compatibility
-  globes_bridge.py bridge from jaxnu.globes.GlobesExperiment to bananafit SampleModels
+  globes_bridge.py bridge from mango.globes.GlobesExperiment to bananafit SampleModels
   toy.py           toy MC generator (DUNE-like)
 ```
 
@@ -207,7 +209,7 @@ plain arrays when `build_forward_model` runs — the per-step cost is
 gather → Horner → product → `segment_sum`, no Python control flow on traced
 values), and **`anti_split` as a static, presorted boundary**: events are
 sorted neutrino-then-antineutrino at build time, so `oscillation.py` makes
-exactly two `jaxnu.probability_constant` calls on contiguous, statically-shaped
+exactly two `mango.probability_constant` calls on contiguous, statically-shaped
 slices per sample instead of a per-event dynamic dispatch.
 
 ---
@@ -232,8 +234,8 @@ Horner form, by default as **float32** (weights are O(1) smooth factors;
 memory is the binding constraint at ~10⁶ events × ~50 systematics) — the
 per-event product that consumes them always accumulates in float64.
 
-The measured dedup payoff (`benchmarks/RESULTS.md` item 4,
-`fig4_dedup_payoff.png` below) is **mostly a build-time and memory effect, not
+The measured dedup payoff (`benchmarks/RESULTS.md` item 4 and its figure
+`benchmarks/figures/fig4_dedup_payoff.png`) is **mostly a build-time and memory effect, not
 an eval-time one**: at 1 systematic and 100,000 events, building without dedup
 (100,000 per-event curves) is ~520× slower than deduped (200 curves) — 33.6 s
 vs 65 ms — and uses ~24× the memory, but the jitted `SplineTable.__call__`'s
@@ -254,7 +256,7 @@ required.
 ## Likelihoods
 
 Both are pure functions on `(mu, w2, data)` returning **log-likelihood** (not
-χ²; MCMC wants a smooth scalar to differentiate), with the jaxnu
+χ²; MCMC wants a smooth scalar to differentiate), with MANGO's
 double-`where` idiom guarding every `sqrt`/`log`/division so reverse-mode AD
 never sees a NaN gradient at a domain edge.
 
@@ -326,9 +328,10 @@ plain flat priors on both, early-warmup NUTS trajectories wander into the
 2. **NUTS recovers truth.** The full posterior's truth point sits within
    **0.92σ** of the NUTS posterior mean, worst-case over the 8 free
    parameters, with R-hat < 1.05 for all of them.
-3. **Laplace vs. NUTS agree.** The MAP+Hessian Laplace-approximated posterior
-   width and the NUTS posterior's empirical width agree to **21%**, worst
-   case — expected in the near-Gaussian Asimov regime.
+3. **Laplace vs. NUTS widths.** In the test's short chains the MAP+Hessian
+   Laplace width and the NUTS width agree to **21%**, worst case. The long
+   run in the figure below shows where the Gaussian approximation stops: it
+   misses the second θ₂₃ octant.
 4. **NUTS vs. RWM agree**, and run cleanly: with the reactor/regularizing
    priors in place, NUTS reports **zero divergent transitions** (vs.
    ~100% with flat priors) and its posterior means agree with RWM's to
@@ -340,23 +343,25 @@ GLoBES-style spectra exactly through `bananafit.globes_bridge`, rebins them
 exactly to an analysis binning, and checks gradients through the bridge
 against finite differences. CI runs it against a pinned MANGO checkout.
 
-![DUNE-like toy: prefit vs. postfit spectra](examples/figures/spectra_prefit_postfit.png)
+![Validation: three estimates of one posterior](examples/figures/readme_corner.png)
 
-*Stacked postfit component spectra (signal/wrongsign/intrinsic/NC) against
-Poisson-fluctuated data, all four samples of `examples/dune_toy_fit.py --quick`
-(the ~2,500-events-per-sample smoke-test scale, 2 chains x 35 NUTS draws -- NOT
-the full run), produced by `ForwardModel.event_weights` + `numpy.bincount` as an
-independent cross-check of `ForwardModel.expected`'s own `segment_sum`. The
-400,000-event version (Asimov data, so the closure is trivially expected) is
-`examples/figures/large/spectra_prefit_postfit.png`.*
+*The end-to-end toy above (FHC samples, 8 free parameters, Asimov data), sampled long enough to
+converge: NUTS seeded with the Laplace covariance (filled), random-walk Metropolis with the
+Laplace covariance as proposal (solid lines) and the Laplace approximation itself, a Gaussian at
+the MAP (dashed). Regions are 68% and 95%; R-hat and effective sample sizes are in the figure.
+NUTS and random-walk Metropolis give the same posterior, and the true values lie inside their 68%
+regions. The Laplace approximation does not capture the lower-octant solution
+(sin²θ₂₃ ≈ 0.46, next to the true 0.57), and its Δm²₃₁ marginal sits slightly high: the reason
+to sample rather than stop at the Hessian. Drawn by `examples/validation_corner.py` (about 20
+minutes on CPU).*
 
-![NUTS posterior corner plot](examples/figures/corner_osc_params.png)
+![DUNE-like toy at 400,000 events: best fit to fluctuated data](examples/figures/readme_spectra.png)
 
-*NUTS posterior over the four free oscillation parameters (dashed = truth),
-hand-rolled corner plot from `run.positions` via `parameter_set.constrain`
--- again the `--quick` smoke run (2 x 35 draws), so the histograms are jagged and
-only indicative. The converged 400,000-event posterior (long RWM chain, 4 x 80,000
-draws) is `examples/figures/large/corner_osc_params_rwm10x.png`.*
+*The 400,000-event toy (`examples/dune_large_fit.py`, 4 samples, 17 free parameters): best fit
+(MAP) to one Poisson-fluctuated dataset, stacked by event component, with data/fit below each
+sample and the Poisson deviance against the number of bins. The components are recomputed with
+`ForwardModel.event_weights` and `numpy.bincount`, independently of `ForwardModel.expected`.
+Drawn by `python examples/dune_large_fit.py --stage readme`.*
 
 ---
 
@@ -379,7 +384,7 @@ Poisson likelihood:
 ![logdensity/grad cost vs n_events](benchmarks/figures/fig1_logdensity_grad_vs_nevents.png)
 
 Forward cost grows roughly linearly in events (≈ 5–8M events/s). The forward pass is
-split roughly evenly between **oscillation** (`jaxnu`'s `nufast` kernel, real
+split roughly evenly between **oscillation** (MANGO's `nufast` kernel, real
 per-event trig: 48 ms at 10⁶ events) and the **spline product** (per-event
 gathers: 71 ms at 10⁶ events; at 10⁵ events oscillation 7.1 ms vs splines
 6.1 ms) — the spline product is *not* negligible next to oscillation, contrary

@@ -29,7 +29,7 @@ Design of the fake physics (no external data, everything analytic/numpy):
   intrinsic nu_e, flavor 0->0, a real survival probability not exactly 1),
   and ``nc`` (flavor -1/-1, unoscillated by the ``EventSample`` convention).
   Component weights are calibrated (see ``_calibrate_component_weight``)
-  against ``jaxnu.probability_constant`` evaluated at the truth point so the
+  against ``mango.probability_constant`` evaluated at the truth point so the
   *post-oscillation* Asimov composition lands at chosen target fractions of
   a DUNE-ballpark total (thousands of numu, hundreds of nue per FHC sample).
 - **Reco energy**: true energy smeared by a stochastic 15%/sqrt(E) term and a
@@ -49,7 +49,7 @@ Design of the fake physics (no external data, everything analytic/numpy):
   shared by name across every sample that has that component.
 
 Everything here is pure-numpy generation seeded by a single ``seed`` (plus
-``jaxnu``'s float64 oscillation-probability calls used only to *calibrate*
+``mango``'s float64 oscillation-probability calls used only to *calibrate*
 weights at build time, never inside the returned model's hot path) --
 identical ``seed`` reproduces an identical analysis bit-for-bit.
 """
@@ -60,7 +60,7 @@ from __future__ import annotations
 import numpy as np
 import jax.numpy as jnp
 
-import jaxnu
+import mango
 
 from .events import make_sample
 from .model import SampleModel
@@ -158,7 +158,7 @@ def _calibrate_component_weight(
     path (``nominal_weight`` itself stays a plain constant array)."""
     if true_energy.size == 0:
         return 0.0
-    P = jaxnu.probability_constant(
+    P = mango.probability_constant(
         truth_osc, true_energy, BASELINE_KM, density=DENSITY_GCC, ye=YE, anti=anti,
     )
     p_event = np.asarray(P)[:, flavor_to, flavor_from]
@@ -365,7 +365,7 @@ def make_dune_like_analysis(
     reproduces an identical analysis.
     """
     rng = np.random.default_rng(seed)
-    truth_osc = jaxnu.nufit_no()
+    truth_osc = mango.nufit_no()
 
     shared_spline_names, specific_spline_by_sample = _plan_splines(n_spline_systs)
     all_spline_names = list(shared_spline_names)

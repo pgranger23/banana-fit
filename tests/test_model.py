@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from scipy.interpolate import CubicSpline
 
-import jaxnu
+import mango
 import bananafit  # noqa: F401  (import enforces float64, per house style)
 from bananafit.events import make_sample
 from bananafit.model import SampleModel, build_forward_model
@@ -29,7 +29,7 @@ from _toyfixture import BASELINE_KM, DENSITY_GCC, YE, build_toy_analysis
 
 
 def _osc_prob_reference(raw, physical_dict):
-    params = jaxnu.OscParams(
+    params = mango.OscParams(
         theta12=physical_dict["theta12"], theta13=physical_dict["theta13"],
         theta23=physical_dict["theta23"], deltacp=physical_dict["deltacp"],
         dm21=physical_dict["dm21"], dm31=physical_dict["dm31"],
@@ -42,7 +42,7 @@ def _osc_prob_reference(raw, physical_dict):
         if idx.size == 0:
             continue
         E = raw.true_energy[idx]
-        Pmat = np.asarray(jaxnu.probability_constant(
+        Pmat = np.asarray(mango.probability_constant(
             params, E, BASELINE_KM, density=DENSITY_GCC, ye=YE, anti=anti,
         ))
         for k, i in enumerate(idx):

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy.stats import multivariate_normal, norm
 
-import jaxnu
+import mango
 import bananafit  # noqa: F401  (import enforces float64, per house style)
 from bananafit.parameters import (
     Flat,
@@ -294,7 +294,7 @@ def test_osc_param_specs_names_and_order():
 
 def test_osc_param_specs_inits_match_nufit_no():
     specs = osc_param_specs(ordering="NO")
-    nu = jaxnu.nufit_no()
+    nu = mango.nufit_no()
     by_name = {s.name: s for s in specs}
     for field in ("theta12", "theta13", "theta23", "deltacp", "dm21", "dm31"):
         assert by_name[field].init == pytest.approx(float(getattr(nu, field)))
@@ -321,7 +321,7 @@ def test_osc_param_specs_builds_valid_parameter_set():
     assert ps.n_params == 6
     assert ps.n_free == 6
     physical = ps.constrain(ps.init_z)
-    nu = jaxnu.nufit_no()
+    nu = mango.nufit_no()
     for i, field in enumerate(
         ("theta12", "theta13", "theta23", "deltacp", "dm21", "dm31")
     ):

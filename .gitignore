@@ -8,3 +8,7 @@ dist/
 benchmarks/output/*.pkl
 # MANGO checkout used by tests/test_globes_bridge.py in CI
 mango-osc/
+# chains of examples/dune_large_fit.py (tens of MB): regenerate with its stages
+examples/figures/large/ckpt/nuts_*.npy
+examples/figures/large/ckpt/rwm_*.npy
+examples/figures/validation/*.npy

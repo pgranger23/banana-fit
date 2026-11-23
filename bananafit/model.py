@@ -35,7 +35,7 @@ from collections.abc import Callable, Sequence
 import jax
 import jax.numpy as jnp
 
-import jaxnu
+import mango
 
 from .events import EventSample
 from .norms import NormSet
@@ -51,9 +51,9 @@ def _static_field(**kwargs):
     return dataclasses.field(metadata=dict(static=True), **kwargs)
 
 
-# The six OscParams field names, in the exact order jaxnu.OscParams expects
+# The six OscParams field names, in the exact order mango.OscParams expects
 # (DESIGN.md §6, "Convention: oscillation parameters appear by their
-# OscParams field names") -- verified to match jaxnu.OscParams's own
+# OscParams field names") -- verified to match mango.OscParams's own
 # dataclass field order, though we pass them by keyword below so that fact
 # is never load-bearing.
 _OSC_NAMES = ("theta12", "theta13", "theta23", "deltacp", "dm21", "dm31")
@@ -130,7 +130,7 @@ def _event_weights(
     """Per-event weight ``(N,)`` f64 for one sample at one physical point."""
     events = sample.events
     osc_vals = physical[jnp.asarray(meta.osc_idx, dtype=jnp.int32)]
-    osc_params = jaxnu.OscParams(
+    osc_params = mango.OscParams(
         theta12=osc_vals[0],
         theta13=osc_vals[1],
         theta23=osc_vals[2],

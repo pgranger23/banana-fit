@@ -1,6 +1,6 @@
-"""Bridge from ``jaxnu.globes.GlobesExperiment`` to bananafit ``SampleModel``\\ s.
+"""Bridge from ``mango.globes.GlobesExperiment`` to bananafit ``SampleModel``\\ s.
 
-``jaxnu.globes`` computes, per channel ``c``, a reconstructed-energy spectrum
+``mango.globes`` computes, per channel ``c``, a reconstructed-energy spectrum
 
     N_c[i] = sum_j K_c[i, j] * P_c[j] + const_c[i]
 
@@ -42,7 +42,7 @@ order (see the exactness test in ``tests/test_globes_bridge.py``).
 
 The oscillation probabilities themselves come from
 ``bananafit.oscillation.ConstantMatterOsc``, matching
-``GlobesExperiment._osc``'s use of ``jaxnu.probability_constant`` at the
+``GlobesExperiment._osc``'s use of ``mango.probability_constant`` at the
 *same* baseline/density/ye and the *same* (default, "nufast") backend --
 this only works for a single-layer matter profile (``len(exp.lengths) ==
 1``, true for the DUNE TDR ``$profiletype = 3`` config with one
@@ -105,7 +105,7 @@ def _rebin_map(fine_edges: np.ndarray, coarse_edges: np.ndarray, *, atol: float 
 
 
 def samples_from_globes(exp, *, rebin_edges=None, min_weight: float = 0.0):
-    """Turn a ``jaxnu.globes.GlobesExperiment`` into bananafit ``SampleModel``\\ s.
+    """Turn a ``mango.globes.GlobesExperiment`` into bananafit ``SampleModel``\\ s.
 
     One ``SampleModel`` (and one ``EventSample``) per GLoBES rule
     (``exp.rules``), replicating ``exp.spectra()`` exactly (see module
@@ -116,8 +116,8 @@ def samples_from_globes(exp, *, rebin_edges=None, min_weight: float = 0.0):
 
     Parameters
     ----------
-    exp : jaxnu.globes.GlobesExperiment
-        A loaded GLoBES experiment (``jaxnu.globes.load(...)``).
+    exp : mango.globes.GlobesExperiment
+        A loaded GLoBES experiment (``mango.globes.load(...)``).
     rebin_edges : dict[str, array_like] or None
         Optional coarser reco-bin edges, keyed by rule name. Each array must
         be strictly increasing and every edge must coincide (within
@@ -211,7 +211,7 @@ def samples_from_globes(exp, *, rebin_edges=None, min_weight: float = 0.0):
                 # oscillation._gather_and_guard), so the placeholder
                 # true_energy (bin center) never affects the weight -- it
                 # only needs to be a finite, physically sensible value fed
-                # into the (discarded) jaxnu.probability_constant call for
+                # into the (discarded) mango.probability_constant call for
                 # this event's nu/antinu slice.
                 te_parts.append(reco_c[ib])
                 rb_parts.append(ib.astype(np.int32))

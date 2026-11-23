@@ -41,7 +41,7 @@ import numpyro.distributions as dist
 import numpyro.distributions.constraints as constraints
 from numpyro.distributions.transforms import biject_to
 
-import jaxnu
+import mango
 
 __all__ = [
     "Prior",
@@ -408,18 +408,18 @@ class ParameterSet:
 def osc_param_specs(ordering: str = "NO") -> tuple:
     """The standard six oscillation :class:`ParamSpec`, named exactly
     ``theta12, theta13, theta23, deltacp, dm21, dm31`` (radians, eV^2),
-    initialised from :func:`jaxnu.nufit_no` and given flat priors with
+    initialised from :func:`mango.nufit_no` and given flat priors with
     sensible physical bounds.
 
     ``ordering``: ``"NO"`` (normal, ``dm31 > 0``, the default -- matches
-    ``jaxnu.nufit_no()`` directly) or ``"IO"`` (inverted, ``dm31 < 0``).
-    jaxnu ships no dedicated inverted-ordering fit point, so for ``"IO"`` the
+    ``mango.nufit_no()`` directly) or ``"IO"`` (inverted, ``dm31 < 0``).
+    mango ships no dedicated inverted-ordering fit point, so for ``"IO"`` the
     magnitude of ``dm31`` is kept and only its sign is flipped -- an
     approximation (the true NuFIT IO best fit differs slightly in theta23 and
     deltacp too), adequate as a chain-starting point, not as a physics
     result.
     """
-    nu = jaxnu.nufit_no()
+    nu = mango.nufit_no()
     ordering = ordering.upper()
     if ordering not in ("NO", "IO"):
         raise ValueError(f"ordering must be 'NO' or 'IO', got {ordering!r}")

@@ -1,5 +1,5 @@
 """Tests for :mod:`bananafit.globes_bridge` -- validates that
-:func:`samples_from_globes` reproduces ``jaxnu.globes.GlobesExperiment.spectra``
+:func:`samples_from_globes` reproduces ``mango.globes.GlobesExperiment.spectra``
 *exactly* (module docstring of ``globes_bridge.py`` explains the pipeline
 mapping), that exact rebinning to the DUNE FD analysis binning agrees with a
 ``np.add.reduceat`` of the native spectrum, that gradients through the
@@ -23,8 +23,8 @@ import os
 import numpy as np
 import pytest
 
-import jaxnu
-import jaxnu.globes as globes
+import mango
+import mango.globes as globes
 import bananafit  # noqa: F401  (import enforces float64, per house style)
 from bananafit.globes_bridge import samples_from_globes
 from bananafit.likelihood import poisson_loglike
@@ -75,8 +75,8 @@ def _rule_names(exp):
 
 
 def _osc_point(**overrides):
-    """A (physical_vector, jaxnu.OscParams) pair at NuFIT-NO +/- overrides."""
-    nu = jaxnu.nufit_no()
+    """A (physical_vector, mango.OscParams) pair at NuFIT-NO +/- overrides."""
+    nu = mango.nufit_no()
     base = dict(
         theta12=float(nu.theta12), theta13=float(nu.theta13),
         theta23=float(nu.theta23), deltacp=float(nu.deltacp),
@@ -84,7 +84,7 @@ def _osc_point(**overrides):
     )
     base.update(overrides)
     vec = np.array([base[k] for k in _OSC_ORDER], dtype=np.float64)
-    params = jaxnu.OscParams(**{k: jnp.asarray(base[k]) for k in _OSC_ORDER})
+    params = mango.OscParams(**{k: jnp.asarray(base[k]) for k in _OSC_ORDER})
     return vec, params
 
 

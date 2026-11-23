@@ -3,11 +3,11 @@
 **B**ayesian **A**utodiff **N**eutrino **A**nalysis & **N**uisance **A**ssessment:
 a differentiable MCMC oscillation fitter in JAX.
 
-Built on [MANGO](https://github.com/pgranger23/mango-osc) (`jaxnu` on PyPI). Takes a
+Built on [MANGO](https://github.com/pgranger23/mango-osc) (`mango-osc` on PyPI, imported as `mango`). Takes a
 **reconstructed MC event sample** + **spline-based systematic responses**
 (event weight vs σ-variation of each systematic) and runs **efficient Bayesian
 fits** of oscillation + nuisance parameters — gradient-based (NUTS/HMC/MALA via
-blackjax, exploiting jaxnu's exact gradients) and classic adaptive random-walk
+blackjax, exploiting MANGO's exact gradients) and classic adaptive random-walk
 Metropolis (MaCh3-style) with the *same* driver code.
 
 The conceptual coverage follows MaCh3 (samplePDF → spline monolith → covariance
@@ -18,10 +18,10 @@ dataclass pytree + pure functions, composed at the top by ~10 lines of user code
 
 - **Pure functions over frozen pytrees.** Every dataclass is
   `@jax.tree_util.register_dataclass` + `@dataclass(frozen=True)` (same pattern
-  as `jaxnu.OscParams`). Static metadata (names, shapes, bin counts) are
+  as `mango.OscParams`). Static metadata (names, shapes, bin counts) are
   `static` fields; arrays are leaves. No class owns a fit loop and a file handle
   and a covariance at once.
-- **float64 mandatory** (set in `__init__.py`, same as jaxnu). Exception: spline
+- **float64 mandatory** (set in `__init__.py`, same as MANGO). Exception: spline
   *coefficient tables* may be stored float32 (weights are O(1) smooth factors;
   memory is the binding constraint at 10⁶ events × 50 systematics), with the
   accumulation (histogramming, likelihood) always in float64.
@@ -37,15 +37,15 @@ dataclass pytree + pure functions, composed at the top by ~10 lines of user code
   channel slices, norm masks are all baked into arrays when the model is
   constructed; the per-step work is gather → Horner → product → segment_sum.
 - **Gradient safety**: `where`-guard any `sqrt`/`log`/division that can hit its
-  domain edge (jaxnu double-`where` pattern) so reverse-mode AD never sees NaN.
-- **Reuse, don't rewrite**: oscillation physics = `jaxnu`; samplers + warmup +
+  domain edge (MANGO's double-`where` pattern) so reverse-mode AD never sees NaN.
+- **Reuse, don't rewrite**: oscillation physics = MANGO (`mango`); samplers + warmup +
   R-hat/ESS = `blackjax`; priors + bounded-parameter bijections =
   `numpyro.distributions`; posterior reporting = `arviz`; MAP pre-fit = `optax`.
   Hand-written (ecosystem gap, each ≲100 lines): batched Horner spline
   evaluator, Barlow-Beeston-lite likelihood, HDF5 schema.
 - **Validation-first**: every module ships pytest tests; numerical kernels are
   validated against scipy / analytic references; the end-to-end fit against an
-  Asimov closure test and the `jaxnu.stat` Fisher matrix.
+  Asimov closure test and the `mango.stat` Fisher matrix.
 
 ## 2. Module layout
 
@@ -58,20 +58,20 @@ bananafit/
   shifts.py        FD reconstructed-energy shift systematics + differentiable binning
   parameters.py    ParamSpec/ParameterSet, transforms, priors
   likelihood.py    binned test statistics (Poisson, BB-lite)
-  oscillation.py   per-event oscillation weights via jaxnu
+  oscillation.py   per-event oscillation weights via MANGO
   model.py         ForwardModel: weights -> binned prediction
   posterior.py     logdensity assembly
   sampling.py      blackjax drivers, multi-chain, adaptation
   diagnostics.py   R-hat/ESS, arviz conversion, summaries
   io.py            HDF5 read/write of samples + splines
   root_import.py   ROOT TSpline3 import: MaCh3/T2K/DUNE spline-monolith compatibility
-  globes_bridge.py bridge from jaxnu.globes.GlobesExperiment to bananafit SampleModels
+  globes_bridge.py bridge from mango.globes.GlobesExperiment to bananafit SampleModels
   toy.py           toy MC generator (DUNE-like)
 tests/             one test file per module
 examples/          end-to-end toy fit, docs
 ```
 
-Dependencies: `jax`, `numpy`, `jaxnu`, `blackjax>=1.6`, `numpyro>=0.21` (its
+Dependencies: `jax`, `numpy`, `mango-osc` (MANGO), `blackjax>=1.6`, `numpyro>=0.21` (its
 `distributions` only), `scipy` (spline building only, never at runtime),
 `h5py`. Optional extras, as `pyproject.toml` lists them: `test` (`pytest`),
 `report` (`arviz`, `matplotlib`), `extras` (`jax-tqdm`, `optax` for the MAP
@@ -89,7 +89,7 @@ class EventSample:
     n_bins:      int                   # static: analysis bins for THIS sample
     true_energy: Array  # (N,) f64, GeV
     reco_bin:    Array  # (N,) int32 in [0, n_bins); out-of-window events get n_bins (overflow slot, dropped from likelihood)
-    flavor_from: Array  # (N,) int32, jaxnu Flavor convention (0=e,1=mu,2=tau)
+    flavor_from: Array  # (N,) int32, MANGO's Flavor convention (0=e,1=mu,2=tau)
     flavor_to:   Array  # (N,) int32
     nominal_weight: Array  # (N,) f64: flux x xsec x eff x POT, all osc-independent factors
     anti_split:  int                   # static: events sorted so [0:anti_split) are neutrinos, [anti_split:N) antineutrinos
@@ -102,7 +102,7 @@ Multi-sample analyses are a `tuple[EventSample, ...]`; global bin offsets are
 computed statically in `model.py`.
 
 Rationale: `anti` as a static sorted split (not a per-event flag) lets the
-oscillation adapter make exactly two jaxnu calls (ν, ν̄) on contiguous slices
+oscillation adapter make exactly two MANGO calls (ν, ν̄) on contiguous slices
 with static shapes — no doubled compute, no dynamic shapes.
 
 ## 4. Systematic response splines (`splines.py`)
@@ -242,7 +242,7 @@ class ConstantMatterOsc:          # long-baseline: DUNE/T2K-like
 class EarthOsc: ...               # atmospheric: probability_earth over (E, cz); needs cos_zenith in EventSample extras — v2, interface reserved
 ```
 
-Implementation: two calls to `jaxnu.probability_constant(params, E_slice, ...)`
+Implementation: two calls to `mango.probability_constant(params, E_slice, ...)`
 (ν slice with `anti=False`, ν̄ slice with `anti=True`; `backend="nufast"`,
 auto-fallback handles NSI/steriles) returning `(n, 3, 3)`, then one
 `P[i, flavor_to[i], flavor_from[i]]` gather. Events with
@@ -258,7 +258,7 @@ per-event weights.
 ## 9. Likelihood (`likelihood.py`)
 
 Pure functions on `(mu, w2, data)` arrays, all returning **log-likelihood**
-(not χ²; MCMC wants logs — `jaxnu.stat.poisson_chi2` stays for frequentist use):
+(not χ²; MCMC wants logs — `mango.stat.poisson_chi2` stays for frequentist use):
 
 - `poisson_loglike(mu, n)` — `n·log μ − μ` (constants dropped), `where`-guarded
   at μ→0 with the MaCh3-style low-MC floor.
@@ -378,13 +378,13 @@ the latter to match MaCh3.
 
 1. Unit: splines vs `scipy.interpolate.CubicSpline` (values + derivatives,
    in/out of range); likelihoods vs analytic/pyhf-formula references; transforms
-   round-trip + jacobian vs `jax.jacobian`; oscillation adapter vs direct jaxnu.
+   round-trip + jacobian vs `jax.jacobian`; oscillation adapter vs direct MANGO calls.
 2. Gradient checks: `jax.grad(logdensity)` vs central finite differences at
-   several points (the jaxnu convention).
+   several points (the MANGO convention).
 3. Statistical: sampler drivers on analytic targets (correlated Gaussian,
    Rosenbrock) — R-hat < 1.01, ESS sane, moments right.
 4. End-to-end: toy DUNE-like Asimov closure (posterior mode = truth), posterior
-   width vs `jaxnu.stat.fisher_matrix` Laplace approximation, NUTS vs RWM
+   width vs `mango.stat.fisher_matrix` Laplace approximation, NUTS vs RWM
    agreement on the same posterior.
 
 ## 13. Deliberate non-goals (v1)

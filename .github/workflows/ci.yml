@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: pgranger23/mango-osc
-          ref: v0.2.4
+          ref: v0.3.0
           path: mango-osc
       - name: Fast test suite
         env:

@@ -504,7 +504,7 @@ def _component_spectra_asimov_plot(model, samples, parameter_set, prefit_physica
         bottom = np.zeros(n_bins)
         for c in toyfit._COMPONENT_ORDER:
             ax.bar(centers, post[c], width=widths, bottom=bottom, color=toyfit._COMPONENT_COLORS[c],
-                   label=c, alpha=0.85, edgecolor="none")
+                   label=toyfit._COMPONENT_LABELS[c], alpha=0.85, edgecolor="none")
             bottom = bottom + post[c]
 
         prefit_total = sum(pre[c] for c in toyfit._COMPONENT_ORDER)
@@ -900,7 +900,7 @@ def stage_report():
         + "\n\n"
         "**What this demonstrates about the fitter**: bananafit scales its full "
         "gradient-based pipeline (binned Poisson likelihood, spline + norm systematics, "
-        "oscillation probabilities via `jaxnu`, MAP + Laplace + NUTS/RWM) to a "
+        "oscillation probabilities via `mango`, MAP + Laplace + NUTS/RWM) to a "
         f"{tm['n_events_total']:,}-event, {parameter_set.n_free}-free-parameter DUNE-like "
         "analysis on CPU alone, with the Laplace-seeded `warmup=\"step-size\"` NUTS recipe "
         "(MAP -> Laplace Hessian -> fixed inverse-mass-matrix, step-size-only dual averaging) "
@@ -947,10 +947,157 @@ def stage_report():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# stage: readme -- the README's spectra figure, plus a redrawn corner plot of the long RWM run
+#   examples/figures/readme_spectra.png               best fit to Poisson-fluctuated data, with
+#                                                     data/fit ratios
+#   examples/figures/large/corner_osc_params_rwm10x.png  long RWM run vs the Laplace approximation
+# Needs ckpt/z_map.npy, cov.npy, data_fluct.npy (stage map) and the long RWM run
+# rwm_positions_seed2.npy (stage rwm, --run-seed 2 --n-warmup-rwm 200
+# --n-samples-rwm 80000; 4 x 80,000 draws, about an hour on CPU). That run mixes slowly
+# along theta23-dm31 (ESS about 45 there), so its corner plot is not in the README; the
+# README's posterior figure comes from examples/validation_corner.py. The fit to the
+# fluctuated data is cached as ckpt/z_map_fluct.npy.
+# ---------------------------------------------------------------------------
+
+README_FIGDIR = os.path.join(HERE, "figures")
+RWM_LONG_SEED = 2
+_SAMPLE_TITLES = {
+    "FHC_numu_dis": r"FHC $\nu_\mu$ disappearance", "FHC_nue_app": r"FHC $\nu_e$ appearance",
+    "RHC_numu_dis": r"RHC $\bar\nu_\mu$ disappearance", "RHC_nue_app": r"RHC $\bar\nu_e$ appearance",
+}
+
+
+def _poisson_deviance(d, mu):
+    d = np.asarray(d, float)
+    mu = np.asarray(mu, float)
+    t = np.where(d > 0, d * np.log(np.where(d > 0, d, 1.0) / mu), 0.0)
+    return float(2.0 * np.sum(mu - d + t))
+
+
+def _readme_spectra(model, samples, physical, data, path):
+    fig = plt.figure(figsize=(12, 8.6), constrained_layout=True)
+    outer = fig.add_gridspec(2, 2)
+    offset = 0
+    for k, sm in enumerate(samples):
+        sub = outer[k // 2, k % 2].subgridspec(2, 1, height_ratios=(3, 1), hspace=0.0)
+        ax = fig.add_subplot(sub[0])
+        axr = fig.add_subplot(sub[1], sharex=ax)
+        n_bins = sm.events.n_bins
+        edges = np.asarray(sm.events.bin_edges)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        widths = np.diff(edges)
+        comp = toyfit._component_spectra(model, sm, physical)
+        d = np.asarray(data)[offset:offset + n_bins]
+        offset += n_bins
+        bottom = np.zeros(n_bins)
+        for c in toyfit._COMPONENT_ORDER:
+            ax.bar(centers, comp[c], width=widths, bottom=bottom, color=toyfit._COMPONENT_COLORS[c],
+                   label=toyfit._COMPONENT_LABELS[c], edgecolor="none")
+            bottom = bottom + comp[c]
+        mu = bottom
+        err = np.sqrt(np.maximum(d, 1.0))
+        ax.errorbar(centers, d, yerr=err, fmt="o", color="black", markersize=3, linewidth=1,
+                    label="data (Poisson-fluctuated)")
+        ax.set_title(_SAMPLE_TITLES.get(sm.events.name, sm.events.name), fontsize=11)
+        ax.set_ylabel("events / bin")
+        ax.tick_params(labelbottom=False)
+        ax.text(0.98, 0.95, f"Poisson deviance {_poisson_deviance(d, mu):.1f} for {n_bins} bins",
+                transform=ax.transAxes, ha="right", va="top", fontsize=8.5, color="#52514e")
+        axr.axhline(1.0, color="#52514e", linewidth=1)
+        axr.errorbar(centers, d / mu, yerr=err / mu, fmt="o", color="black", markersize=3, linewidth=1)
+        half = max(0.2, 2.5 * float(np.median(err / mu)))
+        half = float(np.ceil(half * 10) / 10)
+        axr.set_ylim(1 - half, 1 + half)
+        axr.set_ylabel("data / fit")
+        axr.set_xlabel("reconstructed energy (GeV)")
+        for a in (ax, axr):
+            a.set_xlim(edges[0], edges[-1])
+    handles, labels = fig.axes[0].get_legend_handles_labels()
+    fig.legend(handles[::-1], labels[::-1], loc="outside lower center", ncol=5, frameon=False, fontsize=10)
+    fig.suptitle("DUNE-like toy, 400,000 MC events: best fit to Poisson-fluctuated data", fontsize=13)
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
+def stage_readme(fluct_map_steps: int):
+    samples, parameter_set, truth, model = build_analysis()
+
+    # -- best fit to the fluctuated data, then the spectra figure -------------
+    zf_path = _p("z_map_fluct.npy")
+    if os.path.exists(zf_path):
+        z_fit = jnp.asarray(np.load(zf_path))
+        print(f"[readme] reusing {zf_path}")
+    else:
+        data_fluct = jnp.asarray(np.load(_p("data_fluct.npy")))
+        posterior = make_posterior(model, data_fluct, parameter_set, stat="poisson")
+        t0 = time.perf_counter()
+        z_fit, ld = map_fit(posterior.logdensity, jnp.asarray(np.load(_p("z_map.npy"))),
+                            n_steps=fluct_map_steps)
+        z_fit.block_until_ready()
+        print(f"[readme] MAP on the fluctuated data: {time.perf_counter() - t0:.1f}s, logdensity {float(ld):.2f}")
+        np.save(zf_path, np.asarray(z_fit))
+    physical_fit = np.asarray(parameter_set.constrain(z_fit))
+    _readme_spectra(model, samples, physical_fit, np.load(_p("data_fluct.npy")),
+                    os.path.join(README_FIGDIR, "readme_spectra.png"))
+    print("[readme] wrote readme_spectra.png")
+
+    # -- converged corner plot from the long RWM run ----------------------------
+    pos = np.load(_p(f"rwm_positions_seed{RWM_LONG_SEED}.npy"))          # (chains, draws, n_free)
+    names = [nm for nm in OSC_FREE if nm in parameter_set.free_names]
+    run = SimpleNamespace(positions=jnp.asarray(pos))
+    rh = rhat(run, names=list(parameter_set.free_names), parameter_set=parameter_set)
+    es = ess(run, names=list(parameter_set.free_names), parameter_set=parameter_set)
+    stats = {"n_chains": int(pos.shape[0]), "n_draws": int(pos.shape[1]),
+             "rhat": {k: float(v) for k, v in rh.items()}, "ess": {k: float(v) for k, v in es.items()}}
+    _save_json(f"rwm_long_stats_seed{RWM_LONG_SEED}.json", stats)
+    print("[readme] R-hat / ESS (oscillation):",
+          {nm: (round(stats['rhat'][nm], 3), round(stats['ess'][nm])) for nm in names})
+    print("[readme] max R-hat (all free):", round(max(stats["rhat"].values()), 3),
+          " min ESS (all free):", round(min(stats["ess"].values())))
+
+    constrain = jax.jit(jax.vmap(parameter_set.constrain))
+    def to_physical(z):
+        return np.concatenate([np.asarray(constrain(jnp.asarray(c))) for c in np.array_split(z, 8)])
+    phys_mcmc = to_physical(pos.reshape(-1, pos.shape[-1]))
+    z_map = np.load(_p("z_map.npy"))
+    cov = np.load(_p("cov.npy"))
+    draws = np.random.default_rng(1).multivariate_normal(z_map, cov, size=phys_mcmc.shape[0])
+    phys_lap = to_physical(draws)
+
+    idx = {nm: parameter_set.names.index(nm) for nm in names}
+    mu_dcp = toyfit._circular_mean(phys_mcmc[:, idx["deltacp"]])
+    def show(x, nm):
+        x = np.asarray(x, dtype=float)
+        if nm in ("theta13", "theta23"):
+            return np.sin(x) ** 2
+        if nm == "deltacp":
+            return toyfit._wrap_around(x, mu_dcp)
+        if nm == "dm31":
+            return 1e3 * x
+        return x
+    labels = {"theta13": r"$\sin^2\theta_{13}$", "theta23": r"$\sin^2\theta_{23}$",
+              "deltacp": r"$\delta_\mathrm{CP}$ (rad)", "dm31": r"$\Delta m^2_{31}$ ($10^{-3}$ eV$^2$)"}
+    import corner_plot
+    stats_text = (f"random-walk Metropolis,\n{pos.shape[0]} chains x {pos.shape[1]:,} draws\n"
+                  f"R-hat <= {max(stats['rhat'][nm] for nm in names):.3f}, "
+                  f"ESS >= {min(stats['ess'][nm] for nm in names):,.0f}:\n"
+                  "slow mixing along theta23-dm31,\nthe shapes are indicative only")
+    corner_plot.corner(
+        [dict(cols=[show(phys_mcmc[:, idx[nm]], nm) for nm in names], label="RWM", color="#2a78d6",
+              style="filled"),
+         dict(cols=[show(phys_lap[:, idx[nm]], nm) for nm in names], label="Laplace approximation",
+              color="#eb6834", style="line", linestyle="--")],
+        [float(show(truth[nm], nm)) for nm in names], [labels[nm] for nm in names],
+        "400,000-event toy, Asimov data: long RWM run vs the Laplace approximation",
+        os.path.join(FIGDIR, "corner_osc_params_rwm10x.png"), stats_text=stats_text)
+    print("[readme] wrote large/corner_osc_params_rwm10x.png")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--stage", required=True,
-                    choices=["map", "probe", "nuts", "rwm", "nuts_fluct", "figures", "report"])
+                    choices=["map", "probe", "nuts", "rwm", "nuts_fluct", "figures", "report", "readme"])
     p.add_argument("--map-steps", type=int, default=600)
     p.add_argument("--n-warmup", type=int, default=250)
     p.add_argument("--n-samples", type=int, default=500)
@@ -1019,6 +1166,8 @@ def main():
         stage_figures()
     elif args.stage == "report":
         stage_report()
+    elif args.stage == "readme":
+        stage_readme(args.fluct_map_steps)
 
 
 if __name__ == "__main__":

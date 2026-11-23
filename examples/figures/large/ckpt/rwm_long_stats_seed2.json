@@ -1,0 +1,42 @@
+{
+  "n_chains": 4,
+  "n_draws": 80000,
+  "rhat": {
+    "theta13": 1.0009897272746004,
+    "theta23": 1.0226355337721593,
+    "deltacp": 1.0013839424976423,
+    "dm31": 1.037531361338453,
+    "shared_spline_0": 1.0004525571561445,
+    "shared_spline_1": 1.001534027199304,
+    "FHC_numu_dis_spline_0": 1.0007630976317807,
+    "FHC_numu_dis_spline_1": 1.0029969476462932,
+    "FHC_nue_app_spline_0": 1.000057759303935,
+    "FHC_nue_app_spline_1": 1.000901256804455,
+    "RHC_numu_dis_spline_0": 1.0003853485107388,
+    "RHC_numu_dis_spline_1": 1.0021706384725066,
+    "RHC_nue_app_spline_0": 1.0003204058469806,
+    "nc_norm": 1.0084875963587427,
+    "wrongsign_norm": 1.0113325656326215,
+    "FHC_numu_dis_nc_norm_extra0": 1.0064707123484706,
+    "FHC_nue_app_nc_norm_extra0": 1.0017852599589787
+  },
+  "ess": {
+    "theta13": 160.2202423268279,
+    "theta23": 52.37115857933263,
+    "deltacp": 2049.6267893307845,
+    "dm31": 42.884967794828526,
+    "shared_spline_0": 4462.381380519801,
+    "shared_spline_1": 3414.608194455397,
+    "FHC_numu_dis_spline_0": 5597.147852656851,
+    "FHC_numu_dis_spline_1": 3989.681577459312,
+    "FHC_nue_app_spline_0": 4640.548001779176,
+    "FHC_nue_app_spline_1": 1526.1812710520096,
+    "RHC_numu_dis_spline_0": 2553.1443681442397,
+    "RHC_numu_dis_spline_1": 1906.5462629298258,
+    "RHC_nue_app_spline_0": 2771.5919003071076,
+    "nc_norm": 268.4095315074086,
+    "wrongsign_norm": 290.53416101391446,
+    "FHC_numu_dis_nc_norm_extra0": 232.8524508494777,
+    "FHC_nue_app_nc_norm_extra0": 572.7827797331166
+  }
+}
