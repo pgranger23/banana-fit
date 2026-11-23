@@ -3,11 +3,11 @@ Gaussian log-likelihoods (DESIGN.md §9).
 
 Pure functions on ``(mu, w2, n)`` (or ``(pred, data, cov_inv)``) arrays -- no
 state, no pytree wrapping needed. They return **log-likelihood** (up to an
-additive n-only constant, same convention as ``jaxnu.stat.poisson_chi2``
+additive n-only constant, same convention as ``mango.stat.poisson_chi2``
 dropping ``log(n!)``), not chi2: MCMC wants a smooth scalar to differentiate,
 not a test statistic.
 
-The Poisson/BB-lite kernels follow the jaxnu "double-where" gradient-safety
+The Poisson/BB-lite kernels follow the mango "double-where" gradient-safety
 idiom: any ``sqrt``/``log``/division that can land on its domain edge is
 evaluated on a substituted safe value inside a ``jnp.where`` so reverse-mode
 AD never back-propagates through the singular branch.
@@ -135,7 +135,7 @@ def barlow_beeston_lite_loglike(mu, w2, n, *, mc_floor: float = 1e-5):
     small = sigma2 <= threshold
 
     # Discriminant is analytically >= 0; double-where guards sqrt's gradient
-    # at D = 0 (the jaxnu `_safe_sqrt` idiom) and floating round-off.
+    # at D = 0 (the mango `_safe_sqrt` idiom) and floating round-off.
     sigma2_safe = jnp.where(small, 1.0, sigma2)  # avoid using ~0 in the quadratic
     b = mu_floored * sigma2_safe - 1.0
     disc = b * b + 4.0 * n * sigma2_safe

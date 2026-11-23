@@ -2,9 +2,9 @@
 ``bananafit``: a differentiable MCMC fitter for neutrino oscillation analyses.
 
 Event samples + spline systematics -> binned likelihood -> blackjax samplers,
-with exact gradients through the whole pipeline (oscillations via MANGO, imported as jaxnu).
+with exact gradients through the whole pipeline (oscillations via MANGO, imported as mango).
 
-Float64 is mandatory (oscillation phases): enforced here, same as jaxnu.
+Float64 is mandatory (oscillation phases): enforced here, same as mango.
 See DESIGN.md for the architecture; each submodule docstring explains its
 algorithm choices.
 """
@@ -13,7 +13,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .events import EventSample, make_sample, make_sample_prebinned
 from .splines import SplineTable, build_spline_table

@@ -6,12 +6,12 @@ one detection channel/selection (e.g. FHC nu_e-appearance). It is deliberately
 All the smarts -- sorting by neutrino/antineutrino, digitizing the reco
 variable into analysis bins, and validating everything -- live in the builder
 functions :func:`make_sample` / :func:`make_sample_prebinned`, which run at
-Python/numpy build time (never on traced values; see the jaxnu
+Python/numpy build time (never on traced values; see the mango
 ``_is_concrete`` convention this codebase follows elsewhere -- here it is
 simpler still, since these builders only ever accept plain numpy input, so
 every check is unconditionally eager).
 
-Flavor convention matches ``jaxnu.oscillator.Flavor``: 0=e, 1=mu, 2=tau.
+Flavor convention matches ``mango.oscillator.Flavor``: 0=e, 1=mu, 2=tau.
 ``flavor_from == flavor_to == -1`` marks an "unoscillated" event (e.g. an NC
 background) that should get oscillation weight 1 later, in
 ``oscillation.py`` -- this module only validates that convention, it does not
@@ -43,7 +43,7 @@ class EventSample:
     - ``true_energy``:    (N,) f64, GeV
     - ``reco_bin``:       (N,) int32, in ``[0, n_bins]``; ``n_bins`` itself is
       the overflow slot (out-of-window events), dropped from the likelihood.
-    - ``flavor_from``:    (N,) int32, jaxnu ``Flavor`` convention (0=e,1=mu,2=tau)
+    - ``flavor_from``:    (N,) int32, mango ``Flavor`` convention (0=e,1=mu,2=tau)
     - ``flavor_to``:      (N,) int32, ditto; ``-1`` on *both* from/to marks an
       unoscillated event (e.g. NC background) -- weight 1 later.
     - ``nominal_weight``: (N,) f64, flux x xsec x eff x POT (osc-independent)
@@ -68,7 +68,7 @@ class EventSample:
 
     Build via :func:`make_sample` / :func:`make_sample_prebinned` -- the raw
     constructor does no validation or sorting (same convention as
-    ``jaxnu.OscParams``: the dataclass is a plain container, the builder does
+    ``mango.OscParams``: the dataclass is a plain container, the builder does
     the work).
     """
 
@@ -121,12 +121,12 @@ def _check_flavor_codes(flavor_from, flavor_to):
     if not np.all(np.isin(flavor_from, _VALID_FLAVORS)):
         raise ValueError(
             f"flavor_from has values outside {_VALID_FLAVORS} "
-            "(jaxnu Flavor convention 0=e,1=mu,2=tau, or -1 for unoscillated)"
+            "(mango Flavor convention 0=e,1=mu,2=tau, or -1 for unoscillated)"
         )
     if not np.all(np.isin(flavor_to, _VALID_FLAVORS)):
         raise ValueError(
             f"flavor_to has values outside {_VALID_FLAVORS} "
-            "(jaxnu Flavor convention 0=e,1=mu,2=tau, or -1 for unoscillated)"
+            "(mango Flavor convention 0=e,1=mu,2=tau, or -1 for unoscillated)"
         )
     from_unosc = flavor_from == -1
     to_unosc = flavor_to == -1
@@ -294,7 +294,7 @@ def make_sample(
     bin_edges : (n_bins + 1,) array_like of float
         Strictly increasing bin edges for ``reco_variable``.
     flavor_from, flavor_to : (N,) array_like of int
-        jaxnu ``Flavor`` codes (0=e, 1=mu, 2=tau), or -1 on *both* to mark an
+        mango ``Flavor`` codes (0=e, 1=mu, 2=tau), or -1 on *both* to mark an
         unoscillated event (e.g. NC background).
     anti : (N,) array_like of bool (or 0/1)
         True/1 for antineutrino events.

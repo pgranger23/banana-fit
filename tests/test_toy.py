@@ -1,7 +1,7 @@
 """Tests for bananafit.toy (DESIGN.md §12.4 toy-generator validation).
 
 Small ``n_events_per_sample`` throughout (the generator's calibration step
-makes a handful of ``jaxnu.probability_constant`` calls per sample, so build
+makes a handful of ``mango.probability_constant`` calls per sample, so build
 time is dominated by one-time JIT compilation, not event count -- a few
 thousand events per sample is plenty to exercise every code path while
 keeping the whole test module fast).
@@ -290,9 +290,9 @@ def test_truth_roundtrips_through_constrain(toy):
 
 
 def test_osc_params_match_nufit_no():
-    import jaxnu
+    import mango
 
     _samples, _parameter_set, truth = make_dune_like_analysis(n_events_per_sample=500, seed=0)
-    nu = jaxnu.nufit_no()
+    nu = mango.nufit_no()
     for name in ("theta12", "theta13", "theta23", "deltacp", "dm21", "dm31"):
         assert truth[name] == pytest.approx(float(getattr(nu, name)))

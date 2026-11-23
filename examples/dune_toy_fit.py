@@ -157,7 +157,8 @@ def _classify_components(sm: SampleModel) -> np.ndarray:
     is_intrinsic = flavor_from == 0
     is_numu_like = flavor_from == 1
 
-    nominal_anti = bool(np.mean(anti[is_numu_like]) < 0.5) if np.any(is_numu_like) else False
+    # the sample's nominal polarity is the one most of its nu_mu-like events have
+    nominal_anti = bool(np.mean(anti[is_numu_like]) > 0.5) if np.any(is_numu_like) else False
     is_signal = is_numu_like & (anti == nominal_anti)
     is_wrongsign = is_numu_like & (anti != nominal_anti)
 
@@ -168,9 +169,12 @@ def _classify_components(sm: SampleModel) -> np.ndarray:
     return comp
 
 
-_COMPONENT_ORDER = ("nc", "wrongsign", "intrinsic", "signal")
+_COMPONENT_ORDER = ("signal", "wrongsign", "intrinsic", "nc")   # stacking order, bottom to top
 _COMPONENT_COLORS = {
-    "nc": "#9e9e9e", "wrongsign": "#f4a259", "intrinsic": "#8ecae6", "signal": "#219ebc",
+    "signal": "#2a78d6", "wrongsign": "#eb6834", "intrinsic": "#1baf7a", "nc": "#a8a7a0",
+}
+_COMPONENT_LABELS = {
+    "signal": "signal", "wrongsign": "wrong sign", "intrinsic": "intrinsic beam $\\nu_e$", "nc": "NC",
 }
 
 
@@ -212,7 +216,7 @@ def plot_spectra(model, samples, parameter_set, prefit_physical, postfit_physica
         bottom = np.zeros(n_bins)
         for c in _COMPONENT_ORDER:
             ax.bar(centers, post[c], width=widths, bottom=bottom, color=_COMPONENT_COLORS[c],
-                   label=c, alpha=0.85, edgecolor="none")
+                   label=_COMPONENT_LABELS[c], alpha=0.85, edgecolor="none")
             bottom = bottom + post[c]
 
         prefit_total = sum(pre[c] for c in _COMPONENT_ORDER)

@@ -234,8 +234,8 @@ class EnergyComponents:
 
 def _safe_scale_shift(e_rec: jax.Array, p0, p1, p2) -> jax.Array:
     """Eq 12 additive term: ``e_rec * (p0 + p1*sqrt(e_rec) + p2/sqrt(e_rec))``,
-    double-where guarded (jaxnu ``_safe_sqrt`` idiom, see
-    ``jaxnu.nufast._safe_sqrt``) so ``1/sqrt(e_rec)`` never sees ``e_rec <= 0``
+    double-where guarded (mango ``_safe_sqrt`` idiom, see
+    ``mango.nufast._safe_sqrt``) so ``1/sqrt(e_rec)`` never sees ``e_rec <= 0``
     on the gradient path. Events with no energy in this group (``e_rec <= 0``,
     e.g. no true hadronic activity) get exactly zero shift -- there is no
     particle of that species to which a species-specific response

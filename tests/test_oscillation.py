@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import jaxnu
+import mango
 import bananafit  # noqa: F401  (import enforces float64, per house style)
 from bananafit.oscillation import ConstantMatterOsc, EarthOsc, OscConfig, VacuumOsc
 
@@ -79,7 +79,7 @@ def _empty_sample() -> _Sample:
     return _Sample(true_energy=z, flavor_from=zi, flavor_to=zi, anti_split=0)
 
 
-# --- reference implementation: direct elementwise jaxnu calls in a loop -----
+# --- reference implementation: direct elementwise mango calls in a loop -----
 
 
 def _reference_weights(params, sample, baseline, density, ye, *, vacuum=False):
@@ -95,9 +95,9 @@ def _reference_weights(params, sample, baseline, density, ye, *, vacuum=False):
             continue
         anti = i >= split
         if vacuum:
-            p = jaxnu.probability_vacuum(params, jnp.asarray(E[i]), baseline, anti=anti)
+            p = mango.probability_vacuum(params, jnp.asarray(E[i]), baseline, anti=anti)
         else:
-            p = jaxnu.probability_constant(
+            p = mango.probability_constant(
                 params, jnp.asarray(E[i]), baseline, density=density, ye=ye, anti=anti
             )
         out[i] = float(p[int(ft[i]), int(ff[i])])
@@ -123,7 +123,7 @@ OSC_FIELDS = ("theta12", "theta13", "theta23", "deltacp", "dm21", "dm31")
 
 
 def test_weights_match_direct_loop_mixed_sample():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
 
@@ -141,7 +141,7 @@ def test_weights_match_direct_loop_mixed_sample():
     "sample_fn", [_all_nu_sample, _all_antinu_sample], ids=["all_nu", "all_antinu"]
 )
 def test_weights_edge_case_pure_splits(sample_fn):
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = sample_fn()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
 
@@ -153,7 +153,7 @@ def test_weights_edge_case_pure_splits(sample_fn):
 
 
 def test_weights_empty_sample():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _empty_sample()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
     w = osc.weights(params, sample)
@@ -162,7 +162,7 @@ def test_weights_empty_sample():
 
 
 def test_vacuum_osc_matches_direct_loop():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     osc = VacuumOsc(BASELINE_KM)
 
@@ -175,7 +175,7 @@ def test_vacuum_osc_matches_direct_loop():
 
 
 def test_vacuum_osc_equals_constant_matter_osc_zero_density():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     w_vacuum = np.asarray(VacuumOsc(BASELINE_KM).weights(params, sample))
     w_zero_density = np.asarray(
@@ -188,7 +188,7 @@ def test_vacuum_osc_equals_constant_matter_osc_zero_density():
 
 
 def test_jit_matches_eager():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
 
@@ -214,7 +214,7 @@ def _loss_wrt_params(params, osc, sample):
 
 
 def test_grad_wrt_osc_params_matches_finite_differences():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
 
@@ -236,7 +236,7 @@ def test_grad_wrt_osc_params_matches_finite_differences():
 
 
 def test_grad_wrt_baseline_and_density_matches_finite_differences():
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
 
@@ -265,7 +265,7 @@ def test_grad_wrt_baseline_and_density_matches_finite_differences():
 def test_grad_finite_with_nc_events_present():
     """The where-guard test: NC/unoscillated events (flavor_from == -1) must
     not leak NaN into the gradient through the discarded gather branch."""
-    params = jaxnu.nufit_no()
+    params = mango.nufit_no()
     sample = _mixed_sample()
     assert bool(jnp.any(sample.flavor_from == -1))  # sanity: NC events present
     osc = ConstantMatterOsc(BASELINE_KM, DENSITY_GCC, YE)
@@ -290,7 +290,7 @@ def test_grad_finite_with_nc_events_present():
 
 
 def test_sterile_smoke():
-    st = jaxnu.Sterile3plus1(
+    st = mango.Sterile3plus1(
         theta12=jnp.asarray(0.5836),
         theta13=jnp.asarray(0.1495),
         theta23=jnp.asarray(0.8587),

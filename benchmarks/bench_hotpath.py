@@ -30,8 +30,10 @@ the numbers that matter for the package's actual hot path.
 
 from __future__ import annotations
 
+import json
 import os
 import resource
+import sys
 import time
 import types
 
@@ -45,7 +47,7 @@ import jax
 import jax.numpy as jnp
 
 import bananafit  # noqa: F401 -- import enforces float64 (house convention)
-import jaxnu
+import mango
 import blackjax
 
 from bananafit.events import make_sample_prebinned
@@ -372,7 +374,7 @@ if _run("A"):
         data = built["posteriors"]["poisson"].data
 
         osc_vals = physical[jnp.asarray(meta.osc_idx, dtype=jnp.int32)]
-        osc_params = jaxnu.OscParams(
+        osc_params = mango.OscParams(
             theta12=osc_vals[0], theta13=osc_vals[1], theta23=osc_vals[2],
             deltacp=osc_vals[3], dm21=osc_vals[4], dm31=osc_vals[5],
         )
@@ -794,59 +796,33 @@ if _run("D"):
         log(f"wrote {path}")
 
 
-    # --- fig 1: logdensity/grad time vs n_events, log-log, poisson vs BB-lite ---
+    # --- figs 1-2: drawn by plot_hotpath_figs.py from a small JSON of the measured numbers,
+    #     so they can be redrawn without re-running the benchmark ---
 
-    fig, ax = plt.subplots(figsize=(7.5, 5.5))
-    for stat in ("poisson", "barlow-beeston"):
-        rows = [r for r in item1_rows if r["stat"] == stat]
-        if not rows:
-            continue
-        ns = [r["n_events"] for r in rows]
-        fwd = [r["fwd_ms"] for r in rows]
-        grad = [r["grad_ms"] for r in rows]
-        c = _COLORS[stat]
-        ax.plot(ns, fwd, "o-", color=c, label=f"{stat} fwd")
-        ax.plot(ns, grad, "s--", color=c, label=f"{stat} grad", alpha=0.75)
-        for r in rows:
-            if r["stat"] == "poisson":
-                ax.annotate(
-                    f"{r['events_per_sec_fwd']:.1e} ev/s",
-                    (r["n_events"], r["fwd_ms"]), textcoords="offset points",
-                    xytext=(6, -12), fontsize=9, color=c,
-                )
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("n_events")
-    ax.set_ylabel("time per call (ms)")
-    ax.set_title("logdensity / grad(logdensity) cost vs n_events\n"
-                  "(20 spline systs x 200 curves, 4 norm systs, 60 bins, CPU)")
-    ax.legend(frameon=False)
-    ax.grid(True, which="both", alpha=0.25)
-    savefig(fig, "fig1_logdensity_grad_vs_nevents.png",
-            "logdensity/grad(logdensity) time vs n_events (log-log), Poisson vs "
-            "Barlow-Beeston-lite, with forward events/s annotated at each Poisson point.")
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import plot_hotpath_figs as _phf
 
-    # --- fig 2: component breakdown at 1e5 and 1e6, grouped bar, log y ---
-
-    comp_names = ["oscillation", "spline_product", "norm_product", "segment_sum", "likelihood_priors"]
-    fig, ax = plt.subplots(figsize=(8.5, 5.5))
-    x = np.arange(len(comp_names))
-    width = 0.35
+    comp_names = list(_phf.COMPONENTS)
+    _figdata = {
+        "fig1_note": ("" if QUICK or any(r["stat"] == "barlow-beeston" and r["n_events"] == max(N_SCALES)
+                                         for r in item1_rows)
+                      else f"Barlow-Beeston-lite was not run at {max(N_SCALES):,} events (time budget). ")
+                     + "20 spline systematics x 200 curves, 4 normalisations, 60 bins, float64.",
+        "item1_rows": [{k: r[k] for k in ("stat", "n_events", "fwd_ms", "grad_ms")} for r in item1_rows],
+        "item2_ms": {str(n): {c: item2[n][c]["median_s"] * 1e3 for c in comp_names} for n in item2},
+    }
+    with open(os.path.join(OUTDIR, "hotpath_figdata" + (f"_{OUT_TAG}" if OUT_TAG else "") + ".json"), "w") as fh:
+        json.dump(_figdata, fh, indent=1)
+    _phf.fig1(_figdata["item1_rows"], os.path.join(FIGDIR, "fig1_logdensity_grad_vs_nevents.png"),
+              _figdata["fig1_note"])
+    figure_files["fig1_logdensity_grad_vs_nevents.png"] = (
+        "forward and gradient cost vs number of events (left) and their ratio (right), Poisson and "
+        "Barlow-Beeston-lite.")
+    _phf.fig2(_figdata["item2_ms"], os.path.join(FIGDIR, "fig2_component_breakdown.png"))
     n_lo, n_hi = min(item2.keys()), max(item2.keys())
-    vals_lo = [item2[n_lo][c]["median_s"] * 1e3 for c in comp_names]
-    vals_hi = [item2[n_hi][c]["median_s"] * 1e3 for c in comp_names]
-    ax.bar(x - width / 2, vals_lo, width, label=f"n_events={n_lo:,}", color="#1f77b4")
-    ax.bar(x + width / 2, vals_hi, width, label=f"n_events={n_hi:,}", color="#d62728")
-    ax.set_yscale("log")
-    ax.set_xticks(x)
-    ax.set_xticklabels(comp_names, rotation=20, ha="right")
-    ax.set_ylabel("median time (ms, log scale)")
-    ax.set_title("Forward-pass component breakdown")
-    ax.legend(frameon=False)
-    ax.grid(True, axis="y", which="both", alpha=0.25)
-    savefig(fig, "fig2_component_breakdown.png",
-            f"Component-wise forward cost at n_events={n_lo:,} and n_events={n_hi:,} "
-            "(each component timed as its own AOT-compiled executable).")
+    figure_files["fig2_component_breakdown.png"] = (
+        f"share of the forward pass per component at n_events={n_lo:,} and {n_hi:,} "
+        "(each component timed as its own AOT-compiled executable).")
 
     # --- fig 3: cost vs n_syst, linearity check ---
 
@@ -1201,7 +1177,7 @@ if _run("D"):
         )
         if dominant[0] == "oscillation":
             lines.append(
-                "This matches the DESIGN.md expectation that the jaxnu `nufast` oscillation "
+                "This matches the DESIGN.md expectation that the mango `nufast` oscillation "
                 "probability calculation dominates (it does a real trig/matrix-style calculation "
                 "per event; splines/norms/histogramming are comparatively cheap gather-multiply-add "
                 "work). "
@@ -1224,7 +1200,7 @@ if _run("D"):
             f"{float(np.median([r['ratio'] for r in item1_rows if r['stat']=='poisson'])):.1f}x; "
             "the Barlow-Beeston rows scatter more, partly CPU-load noise on a shared machine) is the "
             "expected few-x tax of reverse-mode AD through a fused elementwise+segment_sum+oscillation "
-            "graph and is comparable to jaxnu's own documented ~3x forward/gradient ratio for the "
+            "graph and is comparable to mango's own documented ~3x forward/gradient ratio for the "
             "oscillation kernel alone, so the extra bananafit machinery (splines, norms, "
             "histogramming, priors) does not appear to add a disproportionate gradient tax.\n"
         )

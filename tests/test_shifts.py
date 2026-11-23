@@ -331,7 +331,7 @@ def _build_shift_sample(seed=0, mode="soft"):
     # these tests bincount against. These tests are about the shift/binning
     # machinery, not oscillation physics -- isolating it keeps the reference
     # computation (plain np.bincount on nominal_weight) exactly right rather
-    # than needing to reproduce jaxnu's oscillation probability here too.
+    # than needing to reproduce mango's oscillation probability here too.
     flavor_from = np.full(n, -1, dtype=np.int32)
     flavor_to = np.full(n, -1, dtype=np.int32)
     anti = np.zeros(n, dtype=bool)

@@ -20,7 +20,7 @@ Memory (spline coefficient table, n_syst=20, n_curves=200, independent of n_even
 
 ![logdensity/grad time vs n_events](figures/fig1_logdensity_grad_vs_nevents.png)
 
-*Figure 1: logdensity/grad(logdensity) time vs n_events (log-log), Poisson vs Barlow-Beeston-lite, forward events/s annotated at each Poisson point.*
+*Figure 1: forward and gradient cost vs number of events (left) and their ratio (right), Poisson and Barlow-Beeston-lite. Redrawn on 2026-11-23 from the same numbers (`output/hotpath_figdata.json`, `plot_hotpath_figs.py`).*
 
 ## 2. Component breakdown
 
@@ -48,7 +48,7 @@ Each component timed as its own AOT-compiled executable (not part of the fused `
 
 ![component breakdown](figures/fig2_component_breakdown.png)
 
-*Figure 2: forward-pass component breakdown at n_events=100,000 and n_events=1,000,000.*
+*Figure 2: share of the forward pass per component at n_events=100,000 and n_events=1,000,000. Redrawn on 2026-11-23 from the same numbers.*
 
 ## 3. Scaling in n_syst (n_events fixed)
 

@@ -1,0 +1,64 @@
+{
+ "source": "bench_hotpath.py full run, CC-IN2P3 Lyon htc node (AMD EPYC 7302), 4 XLA threads, Slurm job 61085279, 2026-10-08 (benchmarks/RESULTS.md)",
+ "fig1_note": "Barlow-Beeston-lite was not run at 1,000,000 events (time budget). 20 spline systematics x 200 curves, 4 normalisations, 60 bins, float64.",
+ "item1_rows": [
+  {
+   "stat": "poisson",
+   "n_events": 10000,
+   "fwd_ms": 1.976325991563499,
+   "grad_ms": 8.448679000139236
+  },
+  {
+   "stat": "barlow-beeston",
+   "n_events": 10000,
+   "fwd_ms": 1.2627510586753488,
+   "grad_ms": 8.321279077790678
+  },
+  {
+   "stat": "poisson",
+   "n_events": 100000,
+   "fwd_ms": 13.379907002672553,
+   "grad_ms": 72.65320001170039
+  },
+  {
+   "stat": "barlow-beeston",
+   "n_events": 100000,
+   "fwd_ms": 10.102377971634269,
+   "grad_ms": 62.41105997469276
+  },
+  {
+   "stat": "poisson",
+   "n_events": 300000,
+   "fwd_ms": 45.62767595052719,
+   "grad_ms": 183.608625899069
+  },
+  {
+   "stat": "barlow-beeston",
+   "n_events": 300000,
+   "fwd_ms": 24.464095011353493,
+   "grad_ms": 183.5725960554555
+  },
+  {
+   "stat": "poisson",
+   "n_events": 1000000,
+   "fwd_ms": 123.36860806681216,
+   "grad_ms": 567.7586559904739
+  }
+ ],
+ "item2_ms": {
+  "100000": {
+   "oscillation": 7.101448951289058,
+   "spline_product": 6.149313994683325,
+   "norm_product": 0.09697291534394026,
+   "segment_sum": 0.48162799794226885,
+   "likelihood_priors": 0.019036000594496727
+  },
+  "1000000": {
+   "oscillation": 48.486234969459474,
+   "spline_product": 71.21990690939128,
+   "norm_product": 1.0842340998351574,
+   "segment_sum": 3.62500490155071,
+   "likelihood_priors": 0.017423066310584545
+  }
+ }
+}
