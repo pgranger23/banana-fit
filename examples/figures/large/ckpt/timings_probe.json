@@ -1,0 +1,10 @@
+{
+  "n_warmup": 3,
+  "n_samples": 20,
+  "t_nuts": 163.4570861980319,
+  "ms_per_draw_nuts": 7106.82983469704,
+  "n_warmup_rwm": 20,
+  "n_samples_rwm": 30,
+  "t_rwm": 31.450777144986205,
+  "ms_per_step_rwm": 629.0155428997241
+}

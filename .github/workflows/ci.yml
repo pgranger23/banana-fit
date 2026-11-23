@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,report,extras,root]"
+      - name: MANGO checkout (DUNE public GLoBES configuration for test_globes_bridge)
+        uses: actions/checkout@v4
+        with:
+          repository: pgranger23/mango-osc
+          ref: v0.2.4
+          path: mango-osc
+      - name: Fast test suite
+        env:
+          MANGO_OSC_DIR: ${{ github.workspace }}/mango-osc
+        # The end-to-end MCMC ladder (~5 min of chains) runs in the separate endtoend job, on pushes to main only.
+        run: pytest -q --ignore=tests/test_endtoend.py
+
+  endtoend:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,report,extras,root]"
+      - name: End-to-end validation ladder
+        run: pytest -q tests/test_endtoend.py

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+*.h5
+benchmarks/output/*.pkl
+# MANGO checkout used by tests/test_globes_bridge.py in CI
+mango-osc/

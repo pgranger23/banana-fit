@@ -1,0 +1,44 @@
+{
+  "label": "~40 free params",
+  "n_free": 40,
+  "map_s": 22.535701798042282,
+  "laplace_s": 54.270346562960185,
+  "methods": {
+    "nuts_window": {
+      "total_s": 99.02286662103143,
+      "total_ess": 45.71428571428571,
+      "ess_per_s": 0.4616538308190774,
+      "warmup_time_estimate_s": 38.08571793116593,
+      "n_warmup": 5,
+      "n_samples": 8,
+      "n_divergent": 16,
+      "step_size": 0.08910806088943939,
+      "setup_s": 0.0
+    },
+    "nuts_laplace_seeded": {
+      "total_s": 67.76796625601128,
+      "total_ess": 1588.8727474050506,
+      "ess_per_s": 23.445778812406246,
+      "warmup_time_estimate_s": 16.94199156400282,
+      "n_warmup": 5,
+      "n_samples": 15,
+      "n_divergent": 0,
+      "step_size": 0.040067913988312755,
+      "map_s": 22.535701798042282,
+      "laplace_s": 54.270346562960185,
+      "setup_s": 76.80604836100247
+    },
+    "rwm_laplace_proposal": {
+      "total_s": 22.00690638506785,
+      "total_ess": 181.87266324709665,
+      "ess_per_s": 8.264344840876912,
+      "warmup_time_estimate_s": 8.464194763487635,
+      "n_warmup": 50,
+      "n_samples": 80,
+      "acceptance": 0.7464259502705156,
+      "map_s": 22.535701798042282,
+      "laplace_s": 54.270346562960185,
+      "setup_s": 76.80604836100247
+    }
+  }
+}

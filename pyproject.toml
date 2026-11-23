@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "banana-fit"
+version = "0.1.0"
+description = "BANANA (Bayesian Autodiff Neutrino Analysis & Nuisance Assessment): differentiable MCMC fitter for neutrino oscillation analyses in JAX (event samples + spline systematics + blackjax samplers)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"   # blackjax>=1.6 / numpyro>=0.21 need >=3.11, arviz>=1.0 needs >=3.12; CI tests 3.12 and 3.13
+dependencies = [
+    "jax>=0.4.20",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "jaxnu>=0.2",
+    "blackjax>=1.6",
+    "numpyro>=0.21",
+    "h5py>=3.8",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+report = ["arviz>=1.0", "matplotlib>=3.6"]
+extras = ["jax-tqdm>=0.4", "optax>=0.2"]
+root = ["uproot>=5"]   # bananafit.root_import (MaCh3 TSpline3 files)
+
+[tool.setuptools.packages.find]
+include = ["bananafit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
