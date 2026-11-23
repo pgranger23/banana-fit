@@ -1,0 +1,61 @@
+{
+  "n_warmup": 3,
+  "n_samples": 5,
+  "n_chains": 4,
+  "warmup_mode": "window",
+  "max_num_doublings": null,
+  "target_acceptance_rate": null,
+  "t_nuts_total": 140.109745344962,
+  "calls": [
+    {
+      "run_seed": 900,
+      "n_warmup": 3,
+      "n_samples": 5,
+      "t_nuts": 140.109745344962
+    }
+  ],
+  "rhat": {
+    "theta13": 1.0805177603641034,
+    "theta23": 0.9903794087947344,
+    "deltacp": 1.0035699704614998,
+    "dm31": 0.9562575768993301,
+    "shared_spline_0": 1.144477717628573,
+    "shared_spline_1": 0.9607461270967108,
+    "FHC_numu_dis_spline_0": 1.1629409136189313,
+    "FHC_numu_dis_spline_1": 1.2274930146088978,
+    "FHC_nue_app_spline_0": 0.9566085352040568,
+    "FHC_nue_app_spline_1": 1.2719536404915501,
+    "RHC_numu_dis_spline_0": 0.917298626739208,
+    "RHC_numu_dis_spline_1": 0.978937459306987,
+    "RHC_nue_app_spline_0": 1.1591094210419501,
+    "nc_norm": 1.727499186004937,
+    "wrongsign_norm": 1.0944289732483778,
+    "FHC_numu_dis_nc_norm_extra0": 0.9823950562854582,
+    "FHC_nue_app_nc_norm_extra0": 1.6502608915132946
+  },
+  "ess": {
+    "theta13": 19.42886927751502,
+    "theta23": 26.020599913279625,
+    "deltacp": 13.990844577855919,
+    "dm31": 26.020599913279625,
+    "shared_spline_0": 9.999577850847638,
+    "shared_spline_1": 20.226865448572084,
+    "FHC_numu_dis_spline_0": 10.420349065021295,
+    "FHC_numu_dis_spline_1": 9.723792043084234,
+    "FHC_nue_app_spline_0": 20.16331319013518,
+    "FHC_nue_app_spline_1": 7.879796257212038,
+    "RHC_numu_dis_spline_0": 17.242998316658543,
+    "RHC_numu_dis_spline_1": 26.020599913279625,
+    "RHC_nue_app_spline_0": 11.027353187100578,
+    "nc_norm": 4.778934481476327,
+    "wrongsign_norm": 13.851194609954954,
+    "FHC_numu_dis_nc_norm_extra0": 26.020599913279625,
+    "FHC_nue_app_nc_norm_extra0": 5.058825700889084
+  },
+  "n_divergent": 4,
+  "acceptance": 0.3759376537635744,
+  "mean_tree_depth": 2.75,
+  "max_tree_depth": 4.0,
+  "mean_leapfrog_steps": 6.2,
+  "max_leapfrog_steps": 13.0
+}

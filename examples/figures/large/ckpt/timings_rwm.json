@@ -1,0 +1,50 @@
+{
+  "n_warmup": 200,
+  "n_samples": 80000,
+  "thinning": 1,
+  "n_chains": 12,
+  "t_rwm_total": 3672.41341893794,
+  "calls": [
+    {
+      "run_seed": 0,
+      "n_warmup": 200,
+      "n_samples": 2000,
+      "thinning": 1,
+      "t_rwm": 125.66268408496398
+    },
+    {
+      "run_seed": 1,
+      "n_warmup": 200,
+      "n_samples": 8000,
+      "thinning": 1,
+      "t_rwm": 354.33993940101936
+    },
+    {
+      "run_seed": 2,
+      "n_warmup": 200,
+      "n_samples": 80000,
+      "thinning": 1,
+      "t_rwm": 3192.410795451957
+    }
+  ],
+  "ess": {
+    "theta13": 10.855643957458414,
+    "theta23": 13.346818029393779,
+    "deltacp": 6.108053359844735,
+    "dm31": 7.708858518449551,
+    "shared_spline_0": 629.7496352785239,
+    "shared_spline_1": 713.6166855868578,
+    "FHC_numu_dis_spline_0": 521.6218343623368,
+    "FHC_numu_dis_spline_1": 514.2331937253645,
+    "FHC_nue_app_spline_0": 458.1064527029934,
+    "FHC_nue_app_spline_1": 120.97780155569703,
+    "RHC_numu_dis_spline_0": 89.26364370488382,
+    "RHC_numu_dis_spline_1": 367.8749824341073,
+    "RHC_nue_app_spline_0": 302.62059237030934,
+    "nc_norm": 14.276979495786007,
+    "wrongsign_norm": 10.962201405641222,
+    "FHC_numu_dis_nc_norm_extra0": 17.689223881814552,
+    "FHC_nue_app_nc_norm_extra0": 70.24129294851028
+  },
+  "acceptance": 0.24655482320929975
+}

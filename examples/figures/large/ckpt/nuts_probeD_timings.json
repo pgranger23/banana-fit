@@ -1,0 +1,85 @@
+{
+  "n_warmup": 5,
+  "n_samples": 10,
+  "n_chains": 20,
+  "warmup_mode": "step-size",
+  "max_num_doublings": 6,
+  "target_acceptance_rate": 0.6,
+  "t_nuts_total": 1248.173750554095,
+  "calls": [
+    {
+      "run_seed": 900,
+      "n_warmup": 5,
+      "n_samples": 10,
+      "t_nuts": 224.02690678893123
+    },
+    {
+      "run_seed": 901,
+      "n_warmup": 5,
+      "n_samples": 10,
+      "t_nuts": 249.90387350600213
+    },
+    {
+      "run_seed": 902,
+      "n_warmup": 5,
+      "n_samples": 10,
+      "t_nuts": 259.9502447920386
+    },
+    {
+      "run_seed": 903,
+      "n_warmup": 5,
+      "n_samples": 10,
+      "t_nuts": 243.10269198811147
+    },
+    {
+      "run_seed": 904,
+      "n_warmup": 5,
+      "n_samples": 10,
+      "t_nuts": 271.1900334790116
+    }
+  ],
+  "rhat": {
+    "theta13": 1.0332118717305672,
+    "theta23": 1.1639461152393922,
+    "deltacp": 1.0708399628377296,
+    "dm31": 1.006118414989937,
+    "shared_spline_0": 1.0871637159260044,
+    "shared_spline_1": 1.0705677723346547,
+    "FHC_numu_dis_spline_0": 1.0328207887084775,
+    "FHC_numu_dis_spline_1": 1.0005269815024862,
+    "FHC_nue_app_spline_0": 0.9912307709464764,
+    "FHC_nue_app_spline_1": 1.0204693816373929,
+    "RHC_numu_dis_spline_0": 1.06315511667076,
+    "RHC_numu_dis_spline_1": 1.0607717051018752,
+    "RHC_nue_app_spline_0": 1.0088123288738111,
+    "nc_norm": 1.0312889232612612,
+    "wrongsign_norm": 0.9994986087610108,
+    "FHC_numu_dis_nc_norm_extra0": 0.9873130759027213,
+    "FHC_nue_app_nc_norm_extra0": 1.0247092600018386
+  },
+  "ess": {
+    "theta13": 166.31995922157327,
+    "theta23": 44.75863466335698,
+    "deltacp": 90.51887356950036,
+    "dm31": 361.93747379175414,
+    "shared_spline_0": 86.94645588408086,
+    "shared_spline_1": 89.91151365821167,
+    "FHC_numu_dis_spline_0": 179.130103554125,
+    "FHC_numu_dis_spline_1": 412.69590640182804,
+    "FHC_nue_app_spline_0": 303.34288535623625,
+    "FHC_nue_app_spline_1": 159.6042510161706,
+    "RHC_numu_dis_spline_0": 110.46702517893256,
+    "RHC_numu_dis_spline_1": 110.83016851197323,
+    "RHC_nue_app_spline_0": 235.51190856242673,
+    "nc_norm": 227.0392793222617,
+    "wrongsign_norm": 298.6839237492558,
+    "FHC_numu_dis_nc_norm_extra0": 460.2059991327962,
+    "FHC_nue_app_nc_norm_extra0": 232.21124958935266
+  },
+  "n_divergent": 6,
+  "acceptance": 0.9077162973976795,
+  "mean_tree_depth": 4.27,
+  "max_tree_depth": 6.0,
+  "mean_leapfrog_steps": 21.44,
+  "max_leapfrog_steps": 63.0
+}

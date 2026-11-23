@@ -1,0 +1,72 @@
+{
+  "n_warmup": 3,
+  "n_samples": 60,
+  "n_chains": 16,
+  "t_nuts_total": 1152.1895721380133,
+  "calls": [
+    {
+      "run_seed": 10,
+      "n_warmup": 3,
+      "n_samples": 60,
+      "t_nuts": 261.40179761196487
+    },
+    {
+      "run_seed": 11,
+      "n_warmup": 3,
+      "n_samples": 100,
+      "t_nuts": 356.6515355280135
+    },
+    {
+      "run_seed": 12,
+      "n_warmup": 3,
+      "n_samples": 60,
+      "t_nuts": 257.424372398993
+    },
+    {
+      "run_seed": 13,
+      "n_warmup": 3,
+      "n_samples": 60,
+      "t_nuts": 276.71186659904197
+    }
+  ],
+  "rhat": {
+    "theta13": 1.0412511526035624,
+    "theta23": 1.1286438265189396,
+    "deltacp": 1.0179885952251881,
+    "dm31": 1.0201788388767874,
+    "shared_spline_0": 1.0879998247416298,
+    "shared_spline_1": 1.0364182198832161,
+    "FHC_numu_dis_spline_0": 1.2826963743135154,
+    "FHC_numu_dis_spline_1": 1.0553091089432298,
+    "FHC_nue_app_spline_0": 1.051686438075542,
+    "FHC_nue_app_spline_1": 1.0279709692116203,
+    "RHC_numu_dis_spline_0": 1.0595799685397957,
+    "RHC_numu_dis_spline_1": 1.0823422325702654,
+    "RHC_nue_app_spline_0": 1.0571451314907108,
+    "nc_norm": 1.0216275122140224,
+    "wrongsign_norm": 1.0101856904532995,
+    "FHC_numu_dis_nc_norm_extra0": 1.0052358258107466,
+    "FHC_nue_app_nc_norm_extra0": 1.1758106077877521
+  },
+  "ess": {
+    "theta13": 206.67443074370775,
+    "theta23": 45.2480667687686,
+    "deltacp": 223.10713115468252,
+    "dm31": 252.6814177914752,
+    "shared_spline_0": 71.39512303431198,
+    "shared_spline_1": 252.82614102113786,
+    "FHC_numu_dis_spline_0": 22.09438464294665,
+    "FHC_numu_dis_spline_1": 191.9662659059733,
+    "FHC_nue_app_spline_0": 150.7950432876571,
+    "FHC_nue_app_spline_1": 198.35774019902163,
+    "RHC_numu_dis_spline_0": 129.6954283757285,
+    "RHC_numu_dis_spline_1": 85.81938427515051,
+    "RHC_nue_app_spline_0": 136.6530210561262,
+    "nc_norm": 319.6355646505535,
+    "wrongsign_norm": 304.1741999488281,
+    "FHC_numu_dis_nc_norm_extra0": 367.0166057216808,
+    "FHC_nue_app_nc_norm_extra0": 33.556868773612784
+  },
+  "n_divergent": 437,
+  "acceptance": 0.21955813776023897
+}
