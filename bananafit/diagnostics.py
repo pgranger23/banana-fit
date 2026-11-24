@@ -78,7 +78,7 @@ import jax.numpy as jnp
 import numpy as np
 import blackjax.diagnostics as _bj_diag
 
-__all__ = ["rhat", "ess", "summary", "to_arviz"]
+__all__ = ["rhat", "ess", "summary", "to_arviz", "octant_indicator", "lockstep_efficiency"]
 
 
 def _param_names(n_free: int, names: Sequence[str] | None) -> list:
@@ -194,6 +194,66 @@ def ess(
         for j, i in enumerate(circ_idx):
             values[i] = min(e_sin[j], e_cos[j])
     return {n: float(v) for n, v in zip(names, values)}
+
+
+def octant_indicator(run, parameter_set, name: str = "theta23") -> dict:
+    """Mixing of the binary octant indicator ``1[theta23 > pi/4]``.
+
+    The per-parameter R-hat/ESS of :func:`rhat`/:func:`ess` can look healthy
+    while the chains rarely change octant: within one octant the draws mix
+    well, and only the octant fraction converges slowly. This function
+    measures that fraction directly. ``parameter_set`` must provide
+    ``.constrain`` and ``.names`` (module docstring); ``name`` is the mixing
+    angle in radians.
+
+    Returns ``{"p_upper", "ess", "mcse", "rhat", "switches_per_chain",
+    "p_upper_per_chain"}``. ``mcse = sqrt(p (1 - p) / ess)``. ``ess`` and
+    ``rhat`` are ``nan`` when no chain ever changes octant (the within-chain
+    variance is zero, so they are undefined); ``switches_per_chain`` then
+    shows it.
+    """
+    names = list(parameter_set.names)
+    idx = names.index(name)
+    pos = jnp.asarray(run.positions)
+    n_chains, n_samples, n_free = pos.shape
+    theta = jax.vmap(lambda z: parameter_set.constrain(z)[idx])(pos.reshape(-1, n_free))
+    ind = np.asarray(theta > jnp.pi / 4, dtype=float).reshape(n_chains, n_samples)
+    p = float(ind.mean())
+    switches = (np.diff(ind, axis=1) != 0).sum(axis=1)
+    if switches.sum() == 0:
+        e = r = float("nan")
+    else:
+        e = float(jnp.ravel(_bj_diag.effective_sample_size(jnp.asarray(ind), chain_axis=0, sample_axis=1))[0])
+        r = float(jnp.ravel(_bj_diag.potential_scale_reduction(jnp.asarray(ind), chain_axis=0, sample_axis=1))[0])
+    mcse = float(np.sqrt(p * (1.0 - p) / e)) if np.isfinite(e) and e > 0 else float("nan")
+    return {"p_upper": p, "ess": e, "mcse": mcse, "rhat": r,
+            "switches_per_chain": switches.tolist(),
+            "p_upper_per_chain": ind.mean(axis=1).tolist()}
+
+
+def lockstep_efficiency(run) -> dict:
+    """How much of a vmapped NUTS run's leapfrog work was useful.
+
+    ``run_mcmc`` advances all chains together under ``jax.vmap``. blackjax's
+    NUTS tree is a while-loop, so at every step the batch keeps integrating
+    until the chain with the longest trajectory stops: the cost of a step is
+    the *maximum* leapfrog count over chains, while each chain only needed its
+    own. This returns ``{"mean_steps", "mean_max_steps", "efficiency"}`` with
+    ``efficiency = mean_steps / mean_max_steps`` (1 = no waste). On a device
+    that runs the chains in parallel (GPU) the waste is idle lanes; on CPU,
+    where vmapping does not run chains in parallel, it is extra wall time.
+
+    Exact for ``thinning=1``. With thinning, ``run.info`` holds per-block
+    means, so the per-step maximum is underestimated and ``efficiency`` is an
+    upper bound.
+    """
+    if "num_integration_steps" not in run.info:
+        raise ValueError("lockstep_efficiency needs a NUTS run (info['num_integration_steps']).")
+    n = np.asarray(run.info["num_integration_steps"], dtype=float)  # (n_chains, n_samples)
+    mean_steps = float(n.mean())
+    mean_max = float(n.max(axis=0).mean())
+    return {"mean_steps": mean_steps, "mean_max_steps": mean_max,
+            "efficiency": mean_steps / mean_max if mean_max > 0 else float("nan")}
 
 
 def summary(

@@ -69,14 +69,24 @@ At 400,000 events ([`examples/LARGE_FIT_REPORT.md`](examples/LARGE_FIT_REPORT.md
 17 free parameters) the MAP fit and the Laplace covariance recover every parameter within 1σ
 of the Asimov truth. NUTS with step-size-only warmup hits a stiff-direction pathology there
 (runaway tree depths, 45% divergences), which the `max_num_doublings` cap and a lower
-`target_acceptance_rate` tame (3% divergences, bounded cost). Sampling is the hard part at
-this scale: a long random-walk run (4 × 80,000 draws) still mixes slowly along the
-θ₂₃–Δm²₃₁ direction (effective sample size about 45 there;
-`examples/figures/large/corner_osc_params_rwm10x.png`). That report's NUTS-vs-RWM ESS/s
-comparison is withdrawn: neither sampler had converged in it
-(NUTS ran with 3 warmup steps and reached a minimum ESS of 22, RWM a minimum ESS of 8). Both
-sampler families share one driver and one tuned proposal source, so switching between them is
-a one-argument change.
+`target_acceptance_rate` tame (3% divergences, bounded cost). That report's NUTS-vs-RWM
+ESS/s comparison is withdrawn: neither sampler had converged in it (NUTS ran with 3 warmup
+steps and reached a minimum ESS of 22, RWM a minimum ESS of 8). Its long random-walk run
+(4 × 80,000 draws, `examples/figures/large/corner_osc_params_rwm10x.png`) mixed slowly along
+θ₂₃–Δm²₃₁ because it predates the 9 October 2026 fix of the random-walk proposal scaling.
+With the current code (16 chains on one V100, about 15 minutes per sampler) every sampler
+finds about 35% of the posterior in the lower octant, with no second maximum:
+
+| sampler | P(lower octant) | octant-indicator ESS/s |
+|---|---|---|
+| random walk | 0.350 ± 0.003 | 56 |
+| random walk + `octant_mirror_hop` | 0.3515 ± 0.0010 | 312 |
+| NUTS, per-chain step sizes | 0.371 ± 0.017 | 0.32 |
+| NUTS + `octant_mirror_hop` + shared step size | 0.342 ± 0.007 | 3.5 |
+
+On this 17-parameter posterior the random walk with the hop is about 90 times faster than
+the best NUTS setup. Both sampler families share one driver and one tuned proposal source,
+so switching between them is a one-argument change.
 
 ---
 
@@ -293,7 +303,12 @@ Warmup modes for the gradient-based kernels (`warmup=`):
   (see [Why differentiable](#why-differentiable)).
 - `"step-size"` — mass matrix fixed (typically from `laplace_covariance`),
   only the step size is dual-averaged. Never slower to warm up than
-  `"window"`, and the recipe behind `laplace_seeded_nuts`.
+  `"window"`, and the recipe behind `laplace_seeded_nuts`. Since v0.3.0 the
+  chains share one step size, adapted on their pooled acceptance rate
+  (`shared_step_size`, on by default here): vmapped chains advance in
+  lockstep, so every NUTS step costs the longest trajectory among them, and
+  one chain with a small step size would set the cost for all.
+  `shared_step_size=False` restores one step size per chain.
 - `"none"` — no adaptation; both step size and mass matrix must be supplied.
 
 `laplace_seeded_nuts(logdensity, z0, ...)` chains `map_fit` → `laplace_covariance`
@@ -307,7 +322,10 @@ a pseudo-inverse off a `RuntimeWarning` if the Hessian isn't PD there).
 `(n_chains, n_samples, n_free)` layout) and `to_arviz(run, parameter_set=...)`
 converts a run to an `arviz.InferenceData` in physical space (circular
 parameters wrapped, correct names) for corner/trace plots and NetCDF
-persistence.
+persistence. `octant_indicator(run, parameter_set)` gives P(upper octant)
+with the ESS, MCSE and R-hat of the indicator θ₂₃ > π/4 (the quantity that
+mixes slowest when the octant is in question), and `lockstep_efficiency(run)`
+the mean over the slowest chain's leapfrog count per NUTS step.
 
 ---
 
@@ -411,7 +429,11 @@ throughput only modestly (87 → 146 steps/s for 1 → 8 chains at 10⁵ events,
 `segment_sum`, Poisson/BB-lite reduction — is dense, branch-free, and
 embarrassingly parallel over the event axis, so the forward pass maps well
 onto a GPU, and many chains can be vmapped in one device call. This
-benchmark is CPU-only.
+benchmark is CPU-only. On GPU the backward pass of the per-event spline
+gather sorts events by curve and differences a running sum, instead of
+scatter-adding into a few hundred curve slots (atomic adds to so few
+addresses serialise): at 400,000 events on an H100 one gradient went from
+62 to 6.2 ms. CPU keeps the scatter.
 
 The Laplace-seeded-NUTS-vs-RWM comparison in `benchmarks/NUTS_TUNING.md` is
 withdrawn: its RWM ran at acceptance 0.69–0.75 with 15–250-sample chains, so
@@ -441,7 +463,10 @@ From `DESIGN.md` §13 (deliberate v1 non-goals):
 - **Mass-ordering jumps** — not in `bananafit/sampling.py` (run NO/IO as two
   chains and Bayes-factor them instead). Guarded ordering and octant
   translation jumps can be built by the caller and passed to `run_mcmc` as
-  `hop_move_fn` moves.
+  `hop_move_fn` moves, for every algorithm. For the octant,
+  `conditional_modes` + `octant_mirror_hop` build one: it mirrors θ₂₃ and
+  moves the other parameters along their conditional-mode curve, and stays
+  exact (unit-Jacobian involution) whatever the curve.
 - **NUTS warmup on poorly-conditioned models** — see
   [Performance](#performance); `laplace_seeded_nuts` is the current
   mitigation, not a full fix (a well-conditioned reparametrization is the

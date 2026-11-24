@@ -18,6 +18,8 @@ import numpy as np
 import pytest
 
 from bananafit.sampling import (
+    conditional_modes,
+    octant_mirror_hop,
     run_mcmc, map_fit, laplace_covariance, laplace_seeded_nuts, MCMCRun,
 )
 from bananafit import diagnostics
@@ -263,12 +265,14 @@ def test_rwm_mixture_hop_prob_out_of_range_rejected():
         )
 
 
-def test_rwm_mixture_hop_prob_rejected_for_gradient_algorithms():
-    with pytest.raises(ValueError, match="hop_prob"):
-        run_mcmc(
-            logdensity, INIT, algorithm="nuts", n_warmup=10, n_samples=10,
-            hop_prob=0.1, hop_indices=(0,),
-        )
+def test_gradient_hop_needs_a_move_and_block_moves_stay_rwm_only():
+    # hops are allowed for nuts/hmc/mala since the octant-move work, with the
+    # same validation as rwm; block_moves remain an rwm-only option
+    with pytest.raises(ValueError, match="hop_indices"):
+        run_mcmc(logdensity, INIT, algorithm="nuts", n_warmup=10, n_samples=10, hop_prob=0.1)
+    with pytest.raises(ValueError, match="block_moves"):
+        run_mcmc(logdensity, INIT, algorithm="nuts", n_warmup=10, n_samples=10,
+                 block_moves=[{"name": "b", "prob": 0.1, "indices": (0,), "cov": jnp.eye(1)}])
 
 
 def test_rwm_mixture_default_hop_prob_matches_plain_rwm():
@@ -392,12 +396,33 @@ def test_rwm_hop_move_fn_requires_positive_hop_prob_or_indices():
         )
 
 
-def test_rwm_hop_move_fn_rejected_for_gradient_algorithms():
-    with pytest.raises(ValueError, match="hop_move_fn"):
+def test_gradient_hop_move_fn_without_hop_prob_rejected():
+    with pytest.raises(ValueError, match="hop_prob"):
         run_mcmc(
             logdensity, INIT, algorithm="nuts", n_warmup=10, n_samples=10,
             hop_move_fn=lambda z: -z,
         )
+
+
+def test_nuts_hop_move_fn_recovers_offset_bimodal_toy():
+    """NUTS alone cannot cross the 20-sigma valley; NUTS followed by the
+    translate-swap hop recovers the analytic 0.3/0.7 split from either mode."""
+    target = _offset_bimodal_logdensity()
+    for start in (_SWAP_MU_A, _SWAP_MU_B):
+        run = run_mcmc(
+            target, start, algorithm="nuts", n_chains=4, n_warmup=200, n_samples=3000,
+            seed=2, inverse_mass_matrix=jnp.full(2, _SWAP_SIGMA**2), warmup="step-size",
+            hop_prob=0.2, hop_move_fn=_translate_swap,
+        )
+        frac_a = float(np.mean(np.asarray(run.positions[..., 0]) > 0.0))
+        assert abs(frac_a - _SWAP_W1) < 0.05, (start, frac_a)
+        hop_rate = float(jnp.mean(run.info["is_hop"]))
+        assert 0.15 < hop_rate < 0.25, hop_rate
+        hop_acc = float(jnp.mean(run.info["hop_accepted"])) / hop_rate
+        assert 0.1 < hop_acc <= 1.0, hop_acc
+        # the hop keeps the cached log-density consistent with the position
+        np.testing.assert_allclose(np.asarray(run.log_prob[0, -5:]),
+                                   np.asarray(jax.vmap(target)(run.positions[0, -5:])), rtol=1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -1435,6 +1460,31 @@ def test_window_warmup_accepts_inverse_mass_matrix_seed(map_and_cov):
     assert np.all(np.isfinite(np.asarray(run.positions)))
 
 
+def test_window_warmup_seed_is_the_metric_before_any_slow_window():
+    # The seed must reach blackjax, not just be accepted. blackjax's window
+    # schedule has no slow (mass-matrix) window below 20 warmup steps, so with
+    # n_warmup=15 the tuned inverse mass matrix is the seed itself, and on a
+    # target with widths 1/10/100 the seeded chains need far fewer leapfrogs
+    # than the identity-metric ones.
+    scales = jnp.array([1.0, 10.0, 100.0])
+
+    def aniso(z):
+        return -0.5 * jnp.sum((z / scales) ** 2)
+
+    seed_imm = scales**2
+    kw = dict(algorithm="nuts", n_chains=2, n_warmup=15, n_samples=40, seed=3,
+              max_num_doublings=8)
+    seeded = run_mcmc(aniso, jnp.zeros(3), inverse_mass_matrix=seed_imm, **kw)
+    plain = run_mcmc(aniso, jnp.zeros(3), **kw)
+    np.testing.assert_allclose(
+        np.asarray(seeded.tuned["inverse_mass_matrix"]),
+        np.broadcast_to(np.asarray(seed_imm), (2, 3)))
+    np.testing.assert_allclose(np.asarray(plain.tuned["inverse_mass_matrix"]), 1.0)
+    n_seeded = float(np.mean(np.asarray(seeded.info["num_integration_steps"])))
+    n_plain = float(np.mean(np.asarray(plain.info["num_integration_steps"])))
+    assert n_seeded < n_plain / 5, (n_seeded, n_plain)
+
+
 # ---------------------------------------------------------------------------
 # laplace_seeded_nuts convenience wrapper
 # ---------------------------------------------------------------------------
@@ -1490,3 +1540,113 @@ def test_laplace_seeded_nuts_invalid_algorithm():
             logdensity, jnp.zeros(D), n_chains=2, n_samples=10, n_warmup=10,
             algorithm="bogus",
         )
+
+
+# ---------------------------------------------------------------------------
+# diagnostics.octant_indicator / lockstep_efficiency
+# ---------------------------------------------------------------------------
+
+
+class _AngleSet:
+    """Stub parameter set: one free coordinate z, theta23 = (pi/2) sigmoid(z)."""
+    names = ("theta23",)
+
+    @staticmethod
+    def constrain(z):
+        return jnp.pi / 2 * jax.nn.sigmoid(z)
+
+
+def test_octant_indicator_iid_and_stuck_chains():
+    rng = np.random.default_rng(0)
+    z = rng.normal(0.5, 1.0, size=(4, 4000, 1))      # iid draws, P(z > 0) = Phi(0.5)
+    out = diagnostics.octant_indicator(SimpleNamespace(positions=jnp.asarray(z)), _AngleSet())
+    assert abs(out["p_upper"] - 0.6915) < 0.02, out
+    assert 0.7 * 16000 < out["ess"] < 1.3 * 16000, out
+    assert out["rhat"] < 1.01
+    np.testing.assert_allclose(out["mcse"], np.sqrt(out["p_upper"] * (1 - out["p_upper"]) / out["ess"]))
+    # two chains stuck in each octant: undefined ESS, reported as nan with zero switches
+    stuck = np.concatenate([np.full((2, 100, 1), -1.0), np.full((2, 100, 1), 1.0)])
+    out = diagnostics.octant_indicator(SimpleNamespace(positions=jnp.asarray(stuck)), _AngleSet())
+    assert out["p_upper"] == 0.5 and out["switches_per_chain"] == [0, 0, 0, 0]
+    assert np.isnan(out["ess"]) and np.isnan(out["mcse"])
+
+
+def test_lockstep_efficiency_counts_the_slowest_chain():
+    steps = np.array([[3.0, 7.0], [7.0, 7.0], [15.0, 3.0], [3.0, 3.0]])   # 4 chains x 2 draws
+    out = diagnostics.lockstep_efficiency(SimpleNamespace(info={"num_integration_steps": steps}))
+    assert out["mean_steps"] == pytest.approx(6.0)
+    assert out["mean_max_steps"] == pytest.approx(11.0)
+    assert out["efficiency"] == pytest.approx(6.0 / 11.0)
+    with pytest.raises(ValueError):
+        diagnostics.lockstep_efficiency(SimpleNamespace(info={"acceptance_rate": steps}))
+
+
+
+# ---------------------------------------------------------------------------
+# conditional_modes / octant_mirror_hop
+# ---------------------------------------------------------------------------
+
+
+def test_conditional_modes_follow_the_gaussian_regression_line():
+    vals = np.linspace(-1.0, 3.0, 5)
+    modes, lds = conditional_modes(logdensity, TRUE_MEAN, 0, vals, n_steps=200)
+    beta = np.asarray(TRUE_COV[1:, 0] / TRUE_COV[0, 0])
+    expect = np.asarray(TRUE_MEAN[1:]) + np.outer(vals - float(TRUE_MEAN[0]), beta)
+    np.testing.assert_allclose(np.asarray(modes[:, 0]), vals)
+    np.testing.assert_allclose(np.asarray(modes[:, 1:]), expect, atol=1e-5)
+    np.testing.assert_allclose(np.asarray(lds), np.asarray(jax.vmap(logdensity)(modes)))
+
+
+def test_octant_mirror_hop_is_a_unit_jacobian_involution():
+    rng = np.random.default_rng(4)
+    grid = np.linspace(-2.0, 2.0, 9)
+    hop = octant_mirror_hop(1, grid, rng.normal(size=(9, 4)))
+    for z in rng.normal(size=(5, 4)) * 1.5:
+        z = jnp.asarray(z)
+        np.testing.assert_allclose(np.asarray(hop(hop(z))), np.asarray(z), atol=1e-12)
+        assert float(hop(z)[1]) == pytest.approx(-float(z[1]))
+        assert abs(float(jnp.linalg.det(jax.jacfwd(hop)(z)))) == pytest.approx(1.0)
+
+
+def test_octant_mirror_hop_with_nuts_recovers_mirror_modes_with_a_shift():
+    """Two modes mirrored in coordinate 0 and shifted in coordinate 1 (the
+    octant + delta-m^2 shape): the plain reflection of coordinate 0 alone is
+    rejected, the ridge-following hop built from conditional_modes is not."""
+    mu_a, mu_b, sig, w_b = jnp.array([3.0, 1.0]), jnp.array([-3.0, -1.0]), 0.3, 0.3
+    target = _offset_bimodal_logdensity(mu_a=mu_a, mu_b=mu_b, sigma=sig, w1=1.0 - w_b)
+    grid = np.linspace(-4.0, 4.0, 17)
+    modes, _ = conditional_modes(target, mu_a, 0, grid, n_steps=200)
+    hop = octant_mirror_hop(0, grid, modes)
+    np.testing.assert_allclose(np.asarray(hop(mu_a)), np.asarray(mu_b), atol=1e-4)
+    run = run_mcmc(target, mu_a, algorithm="nuts", n_chains=4, n_warmup=200, n_samples=3000,
+                   seed=5, inverse_mass_matrix=jnp.full(2, sig**2), warmup="step-size",
+                   hop_prob=0.2, hop_move_fn=hop)
+    frac_b = float(np.mean(np.asarray(run.positions[..., 0]) < 0.0))
+    assert abs(frac_b - w_b) < 0.05, frac_b
+    hop_acc = float(jnp.mean(run.info["hop_accepted"]) / jnp.mean(run.info["is_hop"]))
+    assert hop_acc > 0.3, hop_acc
+
+
+def test_shared_step_size_gives_one_step_size_for_all_chains(map_and_cov):
+    z_map, _ld, cov = map_and_cov
+    kw = dict(algorithm="nuts", n_chains=4, n_warmup=100, n_samples=200, seed=11,
+              init_jitter=0.5, inverse_mass_matrix=cov, warmup="step-size")
+    shared = run_mcmc(logdensity, z_map, shared_step_size=True, **kw)
+    default = run_mcmc(logdensity, z_map, **kw)
+    per_chain = run_mcmc(logdensity, z_map, shared_step_size=False, **kw)
+    ss = np.asarray(shared.tuned["step_size"])
+    np.testing.assert_allclose(ss, ss[0])
+    # the default for Laplace-seeded nuts is the pooled step size
+    np.testing.assert_array_equal(np.asarray(default.tuned["step_size"]), ss)
+    assert np.ptp(np.asarray(per_chain.tuned["step_size"])) > 0
+    np.testing.assert_allclose(np.asarray(shared.positions).mean(axis=(0, 1)), np.asarray(TRUE_MEAN), atol=0.25)
+    for bad in (dict(warmup="window"), dict(algorithm="mala")):
+        with pytest.raises(ValueError, match="shared_step_size"):
+            run_mcmc(logdensity, z_map, **{**kw, **bad, "shared_step_size": True})
+    # the default switches itself off where pooling does not apply
+    short = {**kw, "n_warmup": 20, "n_samples": 5}
+    mala_kw = {k: v for k, v in short.items() if k != "inverse_mass_matrix"}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # divergences of a 20-step warmup
+        run_mcmc(logdensity, z_map, **{**short, "warmup": "window"})
+        run_mcmc(logdensity, z_map, **{**mala_kw, "algorithm": "mala"})
