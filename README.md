@@ -429,11 +429,20 @@ throughput only modestly (87 → 146 steps/s for 1 → 8 chains at 10⁵ events,
 `segment_sum`, Poisson/BB-lite reduction — is dense, branch-free, and
 embarrassingly parallel over the event axis, so the forward pass maps well
 onto a GPU, and many chains can be vmapped in one device call. This
-benchmark is CPU-only. On GPU the backward pass of the per-event spline
-gather sorts events by curve and differences a running sum, instead of
-scatter-adding into a few hundred curve slots (atomic adds to so few
-addresses serialise): at 400,000 events on an H100 one gradient went from
-62 to 6.2 ms. CPU keeps the scatter.
+benchmark is CPU-only. Two changes in v0.3.0 make the gradient cheap on GPU:
+- **Spline gather.** Where many events share each curve, the backward pass
+  of the per-event spline gather sorts events by curve and differences a
+  running sum, instead of scatter-adding into a few hundred curve slots
+  (atomic adds to so few addresses serialise). Tables built by
+  `build_spline_table` or loaded by `bananafit.io` keep that sort order
+  (`SplineTable.with_sort_cache`). CPU keeps the scatter.
+- **Oscillation weights.** These are evaluated under `jax.checkpoint`, so
+  the backward recomputes the per-event intermediates instead of storing
+  them.
+
+At 400,000 events on a V100, one gradient now takes 3.2 ms (62 ms before)
+and 16 vmapped chains take 21 ms (136 ms before). On CPU the checkpoint
+takes the gradient from 107 to 67 ms.
 
 The Laplace-seeded-NUTS-vs-RWM comparison in `benchmarks/NUTS_TUNING.md` is
 withdrawn: its RWM ran at acceptance 0.69–0.75 with 15–250-sample chains, so

@@ -434,3 +434,69 @@ def test_standalone_import():
 
     assert hasattr(_s, "build_spline_table")
     assert hasattr(_s, "SplineTable")
+
+
+def test_sorted_curve_gather_backward_matches_the_scatter():
+    """The GPU backward of the curve gather (sort + float64 running sum) gives the
+    CPU scatter's per-curve sums; checked here on CPU by calling it directly.
+    Bucket 0 (the identity curve) is unused and may differ."""
+    rng = np.random.default_rng(3)
+    n_syst, n_events, n_curves = 3, 20_000, 40
+    # skewed like real tables: most events on curve 0, the rest piled on a few curves
+    idx = np.where(rng.random((n_syst, n_events)) < 0.7, 0,
+                   rng.zipf(1.5, (n_syst, n_events)) % n_curves).astype(np.int32)
+    g = jnp.asarray(rng.normal(size=(n_syst, n_events)).astype(np.float32))
+    ref = np.asarray(splines._scatter_rows(g.astype(jnp.float64), jnp.asarray(idx), n_curves))
+    got = np.asarray(splines._sorted_rows(g, jnp.asarray(idx), n_curves))
+    np.testing.assert_allclose(got[:, 1:], ref[:, 1:], rtol=1e-5, atol=1e-4)
+    # under vmap over a batch of cotangents (chains), as in the samplers
+    got_b = jax.vmap(lambda gg: splines._sorted_rows(gg, jnp.asarray(idx), n_curves))(jnp.stack([g, 2 * g]))
+    np.testing.assert_allclose(np.asarray(got_b[1])[:, 1:], 2 * ref[:, 1:], rtol=1e-5, atol=2e-4)
+
+
+def _contended_table(seed=4, n_syst=2, n_curves=5, n_events=400):
+    """A dense table with many events per curve (> _SORT_MIN_EVENTS_PER_CURVE)."""
+    rng = np.random.default_rng(seed)
+    knot_x = np.tile(_KNOT_GRID, (n_syst, 1))
+    knot_y = np.stack([_make_curve_ys(rng, n_curves, False) for _ in range(n_syst)], axis=0)
+    idx = rng.integers(0, n_curves + 1, size=(n_syst, n_events)).astype(np.int32)
+    return splines.build_spline_table(knot_x, knot_y, idx, dtype=jnp.float64), idx
+
+
+def test_sort_cache_is_attached_checked_and_dropped_when_stale():
+    import dataclasses
+    table, idx = _contended_table()
+    assert table.sort_order is not None  # 400 events on 6 curves: contended
+    order = np.asarray(table.sort_order)
+    assert np.all(np.diff(np.take_along_axis(idx, order, axis=1), axis=1) >= 0)
+    # the presorted backward gives the scatter's per-curve sums (bucket 0 unused)
+    g = jnp.asarray(np.random.default_rng(5).normal(size=idx.shape))
+    ref = np.asarray(splines._scatter_rows(g, jnp.asarray(idx), table.coeffs.shape[1]))
+    got = np.asarray(splines._presorted_rows(g, table.sort_order, table.sort_bounds))
+    np.testing.assert_allclose(got[:, 1:], ref[:, 1:], rtol=1e-12, atol=1e-12)
+    # replacing event_index invalidates the cache: it is dropped, never used
+    stale = dataclasses.replace(table, event_index=jnp.asarray(idx[:, ::-1].copy()))
+    assert stale.sort_order is None and stale.sort_bounds is None
+    # a corrupted cache is dropped too
+    bad = np.asarray(table.sort_order).copy(); bad[0, :2] = bad[0, 0]
+    assert dataclasses.replace(table, sort_order=jnp.asarray(bad)).sort_order is None
+    # few events per curve: no cache, nothing to sort
+    small, _, _ = _build("natural", jnp.float64, n_curves=3)
+    assert small.sort_order is None
+    with pytest.raises(ValueError, match="factorized"):
+        dataclasses.replace(small, event_index=None, event_cell=jnp.zeros(4, jnp.int32),
+                            cell_to_curve=jnp.zeros((1, 1), jnp.int32)).with_sort_cache()
+
+
+def test_sort_cache_leaves_values_and_gradients_unchanged():
+    import dataclasses
+    table, _ = _contended_table()
+    plain = dataclasses.replace(table, sort_order=None, sort_bounds=None)
+    x = jnp.array([0.7, -1.3])
+    f = lambda t: jax.jit(lambda x: jnp.sum(jnp.log(t(x))))
+    np.testing.assert_array_equal(np.asarray(table(x)), np.asarray(plain(x)))
+    np.testing.assert_allclose(np.asarray(jax.grad(f(table))(x)), np.asarray(jax.grad(f(plain))(x)), rtol=1e-12)
+    # vmapped over a batch of points, as the samplers call it
+    xs = jnp.stack([x, -x, 0.5 * x])
+    gb = jax.jit(jax.vmap(jax.grad(lambda x: jnp.sum(jnp.log(table(x))))))(xs)
+    np.testing.assert_allclose(np.asarray(gb[1]), np.asarray(jax.grad(f(plain))(-x)), rtol=1e-12)

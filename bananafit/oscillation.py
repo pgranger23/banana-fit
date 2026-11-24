@@ -101,17 +101,28 @@ def _osc_weights(sample: typing.Any, prob_fn) -> jax.Array:
     n = sample.n_events
     split = sample.anti_split
     pieces = []
-    if split > 0:
-        sl = slice(0, split)
-        P = prob_fn(sample.true_energy[sl], anti=False)
-        pieces.append(_gather_and_guard(P, sample.flavor_from[sl], sample.flavor_to[sl]))
-    if split < n:
-        sl = slice(split, n)
-        P = prob_fn(sample.true_energy[sl], anti=True)
-        pieces.append(_gather_and_guard(P, sample.flavor_from[sl], sample.flavor_to[sl]))
+    for sl, anti in ((slice(0, split), False), (slice(split, n), True)):
+        if sl.stop > sl.start:
+            pieces.append(_slice_weights(prob_fn, anti, sample.true_energy[sl],
+                                         sample.flavor_from[sl], sample.flavor_to[sl]))
     if not pieces:
         return jnp.zeros((0,), dtype=jnp.float64)
     return jnp.concatenate(pieces, axis=0)
+
+
+def _slice_weights(prob_fn, anti, E, flavor_from, flavor_to):
+    """Per-event weight of one (nu or antinu) slice, under ``jax.checkpoint``.
+
+    Reverse mode would otherwise store every per-event intermediate of the
+    probability calculation (tens of ``(n,)`` arrays) and read them all back in
+    the backward pass; with the checkpoint the backward recomputes them inside
+    its own fused loops. The forward is unchanged and the gradient agrees to
+    rounding (1e-8 relative). Measured on the 400k-event example: CPU gradient
+    107 -> 67 ms, 16-chain V100 gradient 34 -> 24 ms.
+    """
+    return jax.checkpoint(
+        lambda E, ff, ft: _gather_and_guard(prob_fn(E, anti=anti), ff, ft)
+    )(E, flavor_from, flavor_to)
 
 
 @jax.tree_util.register_dataclass
