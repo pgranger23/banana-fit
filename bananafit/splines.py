@@ -229,11 +229,132 @@ def _curve_gather_bwd(res, g):
     isolation.
     """
     event_index, n_curves = res
+    # The sort only pays off where many events share each curve (the atomic-add
+    # contention it removes); at cell scale (the factorized path, a few cells per
+    # curve) the scatter is faster on GPU too. Static shapes, so a trace-time choice.
+    if event_index.shape[-1] < _SORT_MIN_EVENTS_PER_CURVE * n_curves:
+        return _scatter_rows(g, event_index, n_curves), None
+    # CPU keeps the scatter (3.6 ms there, no atomics), other platforms sort.
+    d_per_curve = jax.lax.platform_dependent(
+        g, event_index,
+        cpu=lambda g, e: _scatter_rows(g, e, n_curves),
+        default=lambda g, e: _sorted_rows(g, e, n_curves))
+    return d_per_curve, None
+
+
+# Above this many events per curve slot, the GPU backward of ``_curve_gather``
+# sorts instead of scatter-adding. Measured on a V100: 400k-event example, ~1300
+# events per curve, sort 9x faster; a 55-systematic far-detector model, dense
+# table, ~80 per curve, 1.0 s -> 30 ms per gradient; the same model's factorized
+# cell tables, ~1 cell per curve, scatter faster.
+_SORT_MIN_EVENTS_PER_CURVE = 16
+
+
+def _scatter_rows(g, event_index, n_curves):
+    """Per-row ``segment_sum`` of ``g`` by curve, curve 0 dropped (see
+    :func:`_curve_gather_bwd`)."""
     dropped_index = jnp.where(event_index == 0, n_curves, event_index)
-    d_per_curve = jax.vmap(
+    return jax.vmap(
         lambda gi, idxi: jax.ops.segment_sum(gi, idxi, num_segments=n_curves)
     )(g, dropped_index)
-    return d_per_curve, None
+
+
+def _sorted_rows(g, event_index, n_curves):
+    """Same sums as :func:`_scatter_rows` for curves ``1..n_curves-1``, with no
+    scatter: sort each row's events by curve, take a float64 running sum and
+    difference it at the curve boundaries. On a GPU the scatter serialises on
+    atomic adds into the few ``n_curves`` addresses (H100, 400k-event example:
+    62 ms -> 6 ms per gradient). Deterministic, and accumulated in float64.
+    Bucket 0 holds the (unused, see :func:`_curve_gather_bwd`) curve-0 sum
+    instead of zero.
+    """
+    def row(gi, idxi):
+        order = jnp.argsort(idxi)
+        cs = jnp.cumsum(gi[order].astype(jnp.float64))
+        cs = jnp.concatenate([jnp.zeros(1, cs.dtype), cs])
+        bounds = jnp.searchsorted(idxi[order], jnp.arange(n_curves + 1, dtype=idxi.dtype), side="left")
+        return (cs[bounds[1:]] - cs[bounds[:-1]]).astype(gi.dtype)
+    return jax.vmap(row)(g, event_index)
+
+
+def _presorted_rows(g, sort_order, sort_bounds):
+    """:func:`_sorted_rows` with the argsort and the boundaries precomputed
+    (:meth:`SplineTable.with_sort_cache`)."""
+    def row(gi, o, b):
+        cs = jnp.cumsum(gi[o].astype(jnp.float64))
+        cs = jnp.concatenate([jnp.zeros(1, cs.dtype), cs])
+        return (cs[b[1:]] - cs[b[:-1]]).astype(gi.dtype)
+    return jax.vmap(row)(g, sort_order, sort_bounds)
+
+
+@jax.custom_vjp
+def _curve_gather_presorted(per_curve, event_index, sort_order, sort_bounds):
+    """:func:`_curve_gather` for a table with a sort cache: same forward; the
+    GPU backward uses the cached order instead of sorting at every call."""
+    rows = jnp.arange(per_curve.shape[0])[:, None]
+    return per_curve[rows, event_index]
+
+
+def _curve_gather_presorted_fwd(per_curve, event_index, sort_order, sort_bounds):
+    out = _curve_gather_presorted(per_curve, event_index, sort_order, sort_bounds)
+    return out, (event_index, sort_order, sort_bounds, per_curve.shape[1])
+
+
+def _curve_gather_presorted_bwd(res, g):
+    event_index, sort_order, sort_bounds, n_curves = res
+    d_per_curve = jax.lax.platform_dependent(
+        g, event_index, sort_order, sort_bounds,
+        cpu=lambda g, e, o, b: _scatter_rows(g, e, n_curves),
+        default=lambda g, e, o, b: _presorted_rows(g, o, b))
+    return d_per_curve, None, None, None
+
+
+_curve_gather_presorted.defvjp(_curve_gather_presorted_fwd, _curve_gather_presorted_bwd)
+
+
+def _bounds_of_sorted(sorted_index: np.ndarray, n_curves: int) -> np.ndarray:
+    """``(n_syst, n_curves + 1)`` int32: where each curve starts in each sorted row."""
+    grid = np.arange(n_curves + 1)
+    return np.stack([np.searchsorted(r, grid, side="left") for r in sorted_index]).astype(np.int32)
+
+
+def _sort_cache_matches(t) -> bool:
+    """Whether ``t.sort_order`` / ``t.sort_bounds`` are the sort of
+    ``t.event_index``. Checked only on concrete integer arrays; anything else
+    (tracers, the placeholder leaves of pytree utilities) is left alone."""
+    leaves = (t.event_index, t.sort_order, t.sort_bounds)
+    if any(isinstance(x, jax.core.Tracer) or not isinstance(x, (np.ndarray, jax.Array)) for x in leaves):
+        return True
+    ei, order, bounds = (np.asarray(x) for x in leaves)
+    if not all(x.ndim == 2 and np.issubdtype(x.dtype, np.integer) for x in (ei, order, bounds)):
+        return True
+    n_syst, n = ei.shape
+    if order.shape != ei.shape or bounds.shape != (n_syst, int(t.coeffs.shape[1]) + 1):
+        return False
+    if n == 0:
+        return True
+    if order.min() < 0 or order.max() >= n:
+        return False
+    # a permutation of each row ...
+    flat = (order.astype(np.int64) + n * np.arange(n_syst)[:, None]).ravel()
+    if not np.all(np.bincount(flat, minlength=n_syst * n) == 1):
+        return False
+    # ... that sorts it, with the matching boundaries
+    srt = np.take_along_axis(ei, order, axis=1)
+    if np.any(np.diff(srt, axis=1) < 0):
+        return False
+    return np.array_equal(bounds, _bounds_of_sorted(srt, int(t.coeffs.shape[1])))
+
+
+def _with_auto_sort_cache(table: SplineTable) -> SplineTable:
+    """Attach the sort cache to a dense table whose rows put many events on
+    each curve (the case where the GPU backward sorts at all)."""
+    if table.event_index is None:
+        return table
+    n_events, n_curves = table.event_index.shape[-1], int(table.coeffs.shape[1])
+    if n_events < _SORT_MIN_EVENTS_PER_CURVE * n_curves:
+        return table
+    return table.with_sort_cache()
 
 
 _curve_gather.defvjp(_curve_gather_fwd, _curve_gather_bwd)
@@ -368,6 +489,39 @@ class SplineTable:
     # ``BinnedSplineHandler::CalcSplineWeights``: ``if (weight < 0) weight = 0``); None (default) = no per-curve floor, only the
     # product-level ``weight_clip`` (MaCh3 >= v2.7.0 drops an event whose TOTAL weight is <= 0). Static config.
     curve_floor: float | None = dataclasses.field(default=None, metadata=dict(static=True))
+    # Optional sort of ``event_index`` for the GPU backward of the curve gather (dense path
+    # only; see :meth:`with_sort_cache`): per row, the argsort of ``event_index`` and the
+    # curve boundaries in that order. ``None`` = sorted at every gradient call instead.
+    sort_order: jax.Array | None = None  # (n_syst, N) int32
+    sort_bounds: jax.Array | None = None  # (n_syst, n_curves + 1) int32
+
+    def __post_init__(self):
+        # A cache that no longer matches event_index (e.g. after
+        # dataclasses.replace(table, event_index=...)) is dropped, never used.
+        if self.sort_order is not None and not _sort_cache_matches(self):
+            object.__setattr__(self, "sort_order", None)
+            object.__setattr__(self, "sort_bounds", None)
+
+    def with_sort_cache(self) -> SplineTable:
+        """This table with :attr:`sort_order` / :attr:`sort_bounds` filled in
+        (dense tables only).
+
+        On GPU the backward of the per-event curve gather sorts each row of
+        ``event_index`` by curve (see :func:`_sorted_rows`); with the cache the
+        sort is done once here, on the host, instead of at every gradient call
+        (400k-event example, V100: 1.0 -> 0.08 ms per sample and call). Costs
+        one more ``(n_syst, N)`` int32 array. :func:`build_spline_table` and
+        :func:`bananafit.io.load_sample` attach it by themselves when many
+        events share each curve; call this for tables built another way. The
+        cache is checked against ``event_index`` whenever a table is built and
+        dropped if it no longer matches.
+        """
+        if self.event_index is None:
+            raise ValueError("with_sort_cache: factorized tables (event_index=None) need no sort cache")
+        ei = np.asarray(self.event_index)
+        order = np.argsort(ei, axis=1, kind="stable").astype(np.int32)
+        bounds = _bounds_of_sorted(np.take_along_axis(ei, order, axis=1), int(self.coeffs.shape[1]))
+        return dataclasses.replace(self, sort_order=jnp.asarray(order), sort_bounds=jnp.asarray(bounds))
 
     def _eval_all_curves(self, x: jax.Array) -> jax.Array:
         """Per systematic, per curve, weight at ``x``: ``(n_syst, n_curves)``.
@@ -474,7 +628,10 @@ class SplineTable:
         """
         per_curve = self._eval_all_curves(x)  # (n_syst, n_curves)
         event_index = self._effective_event_index()  # (n_syst, N), either path
-        gathered = _curve_gather(per_curve, event_index)  # (n_syst, N)
+        if self.sort_order is not None and self.event_cell is None:
+            gathered = _curve_gather_presorted(per_curve, event_index, self.sort_order, self.sort_bounds)
+        else:
+            gathered = _curve_gather(per_curve, event_index)  # (n_syst, N)
         return gathered.astype(jnp.float64)
 
     def __call__(self, x: jax.Array) -> jax.Array:
@@ -676,7 +833,7 @@ def build_spline_table(
     coeffs = _fit_coeffs(knot_x, knot_y, boundary, names)
     lo, hi = _resolve_weight_clip(weight_clip)
 
-    return SplineTable(
+    return _with_auto_sort_cache(SplineTable(
         names=names,
         knots=jnp.asarray(knot_x, dtype=jnp.float64),
         coeffs=jnp.asarray(coeffs, dtype=dtype),
@@ -684,7 +841,7 @@ def build_spline_table(
         weight_clip=(lo, hi),
         extrapolation=extrapolation,
         curve_floor=None if curve_floor is None else float(curve_floor),
-    )
+    ))
 
 
 def build_spline_table_factorized(

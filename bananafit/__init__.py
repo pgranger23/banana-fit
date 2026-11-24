@@ -13,7 +13,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .events import EventSample, make_sample, make_sample_prebinned
 from .splines import SplineTable, build_spline_table
@@ -45,8 +45,9 @@ from .shifts import (
     cvn_efficiency_weight,
 )
 from .posterior import BinnedPosterior, make_posterior, asimov_data
-from .sampling import MCMCRun, run_mcmc, map_fit, laplace_covariance
-from .diagnostics import rhat, ess, summary, to_arviz
+from .sampling import (MCMCRun, run_mcmc, map_fit, laplace_covariance,
+                       conditional_modes, octant_mirror_hop)
+from .diagnostics import rhat, ess, summary, to_arviz, octant_indicator, lockstep_efficiency
 from .io import save_analysis, load_analysis, save_sample, load_sample
 from .toy import make_dune_like_analysis, poisson_fluctuate
 from .root_import import read_tspline3_knots, spline_table_from_root
@@ -66,7 +67,8 @@ __all__ = [
     "soft_bin_weights", "hard_bin_index", "cvn_efficiency_weight",
     "BinnedPosterior", "make_posterior", "asimov_data",
     "MCMCRun", "run_mcmc", "map_fit", "laplace_covariance",
-    "rhat", "ess", "summary", "to_arviz",
+    "conditional_modes", "octant_mirror_hop",
+    "rhat", "ess", "summary", "to_arviz", "octant_indicator", "lockstep_efficiency",
     "save_analysis", "load_analysis", "save_sample", "load_sample",
     "make_dune_like_analysis", "poisson_fluctuate",
     "read_tspline3_knots", "spline_table_from_root",

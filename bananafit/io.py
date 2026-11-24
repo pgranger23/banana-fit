@@ -56,7 +56,7 @@ import numpy as np
 
 from bananafit.events import EventSample
 from bananafit.norms import NormSet
-from bananafit.splines import SplineTable, build_spline_table
+from bananafit.splines import SplineTable, _with_auto_sort_cache, build_spline_table
 
 FORMAT_VERSION = 1
 
@@ -272,7 +272,7 @@ def _read_splines(group, n_events: int, *, rebuild: str) -> SplineTable:
     curve_floor = float(group.attrs["curve_floor"]) if "curve_floor" in group.attrs else None
 
     if rebuild == "from-coeffs":
-        return SplineTable(
+        return _with_auto_sort_cache(SplineTable(
             names=names,
             knots=jnp.asarray(knots, dtype=jnp.float64),
             coeffs=jnp.asarray(coeffs),  # keep the exact stored dtype
@@ -280,7 +280,7 @@ def _read_splines(group, n_events: int, *, rebuild: str) -> SplineTable:
             weight_clip=weight_clip,
             extrapolation=extrapolation,
             curve_floor=curve_floor,
-        )
+        ))
     if rebuild == "from-knots":
         if "knot_y" not in group:
             raise ValueError(

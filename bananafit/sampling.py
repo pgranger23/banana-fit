@@ -279,7 +279,7 @@ def _mala_warmup(logdensity, key, x0, n_warmup, target=_MALA_TARGET_ACCEPT,
 
 def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kwargs,
                                   inverse_mass_matrix, target=_HMC_TARGET_ACCEPT,
-                                  initial_step_size=1.0):
+                                  initial_step_size=1.0, axis_name=None):
     """Step-size-only warmup for the HMC family (nuts/hmc) via dual
     averaging, with the inverse mass matrix held *fixed* at a caller-supplied
     value (typically a MAP+Laplace covariance estimate, DESIGN.md's
@@ -293,6 +293,11 @@ def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kw
     windows, not the step-size dual averaging itself), this skips mass-matrix
     estimation entirely, so a full ``n_warmup``-step call here is far cheaper
     than the equivalent window-adapted call.
+
+    ``axis_name`` (set when the chains are vmapped with that axis name): the
+    dual averaging is driven by the acceptance rate averaged over all chains
+    at each step, so every chain ends with the same step size (see
+    ``run_mcmc``'s ``shared_step_size``).
     """
     state = blackjax.hmc.init(x0, logdensity)  # nuts.init is hmc.init (shared)
     da_init, da_update, da_final = dual_averaging_adaptation(target)
@@ -304,7 +309,10 @@ def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kw
         state, info = kernel(
             k, state, logdensity, step_size, inverse_mass_matrix, **extra_kwargs
         )
-        da_state = da_update(da_state, info.acceptance_rate)
+        acc = info.acceptance_rate
+        if axis_name is not None:
+            acc = jax.lax.pmean(acc, axis_name)
+        da_state = da_update(da_state, acc)
         return (state, da_state), None
 
     keys = jax.random.split(key, n_warmup)
@@ -312,12 +320,56 @@ def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kw
     return state, da_final(da_state)
 
 
+def _with_hop(step_fn, logdensity, hop_prob, hop_fn):
+    """Follow each NUTS/HMC/MALA step, with probability ``hop_prob``, by a
+    Metropolis hop ``z -> hop_fn(z)``.
+
+    ``hop_fn`` must be a unit-Jacobian involution (same contract as the RWM
+    hop, see the module comment above ``_build_mixture_rwm_kernel``), so the
+    hop is a symmetric deterministic proposal and the plain Metropolis ratio
+    is exact. The gradient step and the hop each leave the target invariant,
+    so their composition does too. The proposed point costs one gradient;
+    under ``vmap`` (all chains batched) both branches of the ``cond`` run, so
+    in practice about one extra gradient per step, small next to a NUTS
+    trajectory.
+    Hops act in the sampling phase only; warmup is unchanged.
+    """
+    vg = jax.value_and_grad(logdensity)
+
+    def step(key, state):
+        k_step, k_choice, k_acc = jax.random.split(key, 3)
+        state, info = step_fn(k_step, state)
+        is_hop = jax.random.uniform(k_choice) < hop_prob
+        proposal = hop_fn(state.position)
+        # skipped when no hop is drawn, except under vmap (both branches run)
+        ld_p, grad_p = jax.lax.cond(is_hop, lambda: vg(proposal),
+                                    lambda: (state.logdensity, state.logdensity_grad))
+        log_acc = jnp.where(jnp.isfinite(ld_p), jnp.minimum(0.0, ld_p - state.logdensity), -jnp.inf)
+        accept = jnp.logical_and(is_hop, jnp.log(jax.random.uniform(k_acc)) < log_acc)
+        hopped = state._replace(position=proposal, logdensity=ld_p, logdensity_grad=grad_p)
+        state = jax.tree_util.tree_map(lambda a, b: jnp.where(accept, a, b), hopped, state)
+        info = {**info._asdict(), "is_hop": is_hop, "hop_accepted": accept}
+        return state, info
+
+    return step
+
+
 def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup,
                          n_samples, key, thinning, progress,
                          inverse_mass_matrix=None, step_size=None, warmup="window",
-                         max_num_doublings=None, target_acceptance_rate=None):
+                         max_num_doublings=None, target_acceptance_rate=None,
+                         hop_prob=0.0, hop_fn=None, shared_step_size=None):
     if warmup not in _WARMUP_MODES:
         raise ValueError(f"warmup must be one of {_WARMUP_MODES}, got {warmup!r}")
+    pooled_ok = warmup == "step-size" and algorithm in ("nuts", "hmc")
+    if shared_step_size is None:
+        shared_step_size = pooled_ok
+    if shared_step_size and not pooled_ok:
+        raise ValueError(
+            "shared_step_size needs algorithm='nuts'/'hmc' and warmup='step-size' "
+            "(the chains' acceptance rates are pooled across the vmapped chain "
+            "axis during step-size warmup)."
+        )
     if max_num_doublings is not None and algorithm != "nuts":
         raise ValueError(
             "max_num_doublings is a NUTS-specific tree-depth cap (hmc has a "
@@ -328,6 +380,8 @@ def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup
     info_spec = _MALA_INFO_SPEC if algorithm == "mala" else (
         _NUTS_INFO_SPEC if algorithm == "nuts" else _HMC_FAMILY_INFO_SPEC
     )
+    if hop_fn is not None:
+        info_spec = {**info_spec, "is_hop": "mean", "hop_accepted": "mean"}
     warm_key, sample_key = jax.random.split(key)
     warm_keys = jax.random.split(warm_key, n_chains)
     sample_keys = jax.random.split(sample_key, n_chains)
@@ -439,6 +493,7 @@ def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup
                 state, tuned_step_size = _hmc_family_step_size_warmup(
                     logdensity, k, x0, n_warmup, kernel, extra, imm,
                     target=hmc_target, initial_step_size=init_ss,
+                    axis_name="chain" if shared_step_size else None,
                 )
                 tuned = {"step_size": tuned_step_size, "inverse_mass_matrix": imm}
                 if algorithm == "hmc":
@@ -485,10 +540,15 @@ def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup
                 nuts_kwargs["max_num_doublings"] = max_num_doublings
             return blackjax.nuts(logdensity, **nuts_kwargs).step
 
-    states, tuned = jax.vmap(warmup_one)(warm_keys, chain_init)
+    if shared_step_size:
+        states, tuned = jax.vmap(warmup_one, axis_name="chain")(warm_keys, chain_init)
+    else:
+        states, tuned = jax.vmap(warmup_one)(warm_keys, chain_init)
 
     def run_one(state, tuned_i, k):
         step_fn = make_step(tuned_i)
+        if hop_fn is not None:
+            step_fn = _with_hop(step_fn, logdensity, hop_prob, hop_fn)
         keys_flat = jax.random.split(k, n_samples * thinning)
         return _thinned_scan(
             step_fn, state, keys_flat, n_samples, thinning, info_spec, progress
@@ -1173,6 +1233,7 @@ def run_mcmc(
     warmup: str = "window",
     max_num_doublings: int | None = None,
     target_acceptance_rate: float | None = None,
+    shared_step_size: bool | None = None,
 ) -> MCMCRun:
     """Run multi-chain MCMC on ``logdensity`` (a scalar function of a
     ``(n_free,)`` z-space vector) and return an :class:`MCMCRun`.
@@ -1213,7 +1274,10 @@ def run_mcmc(
         ``step_scale * proposal_cov``, with ``step_scale`` defaulting to the
         Roberts-Rosenthal ``2.38**2 / n_free`` optimal-scaling constant.
     hop_prob, hop_indices, hop_move_fn:
-        ``rwm`` only. Enables the Gaussian+hop mixture kernel (see the
+        Deterministic hop moves between modes (e.g. theta23 octants).
+        ``nuts``/``hmc``/``mala``: each sampling step is followed, with
+        probability ``hop_prob``, by a Metropolis hop (see ``_with_hop``;
+        not applied during warmup). ``rwm``: enables the Gaussian+hop mixture kernel (see the
         module comment above ``_build_mixture_rwm_kernel``): with
         probability ``hop_prob`` (default 0, i.e. off -- plain Gaussian RWM,
         unchanged behavior), propose a hop move instead of the usual
@@ -1359,6 +1423,21 @@ def run_mcmc(
         via the same Nesterov dual averaging used internally); has no effect
         under ``warmup="none"`` (no adaptation runs at all).
 
+    shared_step_size:
+        ``nuts``/``hmc`` with ``warmup="step-size"``:
+        adapt one step size for all chains, from the acceptance rate pooled
+        across chains at each warmup step, instead of one per chain. Under
+        ``vmap`` every NUTS step costs the longest trajectory among the
+        chains, so a chain whose short warmup settled on a small step size
+        sets the cost for all of them (measured on the 8-parameter
+        validation toy: per-chain step sizes 0.15-0.66, lockstep
+        efficiency 0.46; pooling gave 1.8-2.3x the minimum ESS per second
+        and removed the divergences). Default ``None``: on for
+        ``nuts``/``hmc`` with ``warmup="step-size"`` (the Laplace-seeded
+        recipe), off otherwise. ``False`` restores one step size per chain
+        (the behaviour before v0.3.0); ``True`` with any other algorithm or
+        warmup raises.
+
     Compiled-program cache (``algorithm="rwm"``): burn-in + sampling run as one
     jitted program, cached on the log-density callable and the static settings
     (kernel structure, chain/step counts, thinning, hop settings); proposal
@@ -1381,10 +1460,11 @@ def run_mcmc(
 
     if algorithm == "rwm":
         if (inverse_mass_matrix is not None or step_size is not None or warmup != "window"
-                or max_num_doublings is not None or target_acceptance_rate is not None):
+                or max_num_doublings is not None or target_acceptance_rate is not None
+                or shared_step_size):  # None is falsy: only an explicit True is rejected
             raise ValueError(
                 "inverse_mass_matrix/step_size/warmup/max_num_doublings/"
-                "target_acceptance_rate are gradient-based-algorithm options "
+                "target_acceptance_rate/shared_step_size are gradient-based-algorithm options "
                 "(nuts/hmc/mala); algorithm='rwm' uses proposal_cov/step_scale "
                 "instead."
             )
@@ -1405,12 +1485,19 @@ def run_mcmc(
             hop_move_fn=hop_move_fn,
             block_moves=block_moves,
         )
-    elif (hop_prob != 0.0 or hop_indices is not None or hop_move_fn is not None
-          or block_moves):
+    elif block_moves:
         raise ValueError(
-            "hop_prob/hop_indices/hop_move_fn/block_moves are "
-            "algorithm='rwm'-only options (the mixture/blocked kernels); "
-            f"got algorithm={algorithm!r}."
+            "block_moves is an algorithm='rwm'-only option (the blocked "
+            f"Metropolis-within-Gibbs kernel); got algorithm={algorithm!r}."
+        )
+
+    hop_fn = None
+    if hop_prob != 0.0:
+        hop_fn = _default_hop_move(hop_prob, hop_indices, hop_move_fn, n_free)
+    elif hop_indices is not None or hop_move_fn is not None:
+        raise ValueError(
+            "hop_indices/hop_move_fn have no effect without hop_prob > 0 "
+            f"(got hop_prob={hop_prob}, algorithm={algorithm!r})."
         )
 
     return _run_gradient_based(
@@ -1428,6 +1515,9 @@ def run_mcmc(
         warmup=warmup,
         max_num_doublings=max_num_doublings,
         target_acceptance_rate=target_acceptance_rate,
+        hop_prob=hop_prob,
+        hop_fn=hop_fn,
+        shared_step_size=shared_step_size,
     )
 
 
@@ -1491,6 +1581,98 @@ def map_fit(
     opt_state = solver.init(init)
     (z_map, _), _ = jax.lax.scan(body, (init, opt_state), None, length=n_steps)
     return z_map, logdensity(z_map)
+
+
+def conditional_modes(logdensity: Callable[[Array], Array], z_start: Array, index: int,
+                      values, *, n_steps: int = 300) -> tuple[Array, Array]:
+    """Maximise ``logdensity`` over every coordinate except ``index``, with
+    ``z[index]`` held at each entry of ``values`` (a profile scan).
+
+    Each fit starts from the finished fit at the nearest value already done
+    (the first from ``z_start``), so the scan follows one ridge. Returns
+    ``(modes, logdensities)``: ``modes`` is ``(len(values), n_free)`` (full
+    vectors, ``modes[k, index] == values[k]``), in the order of ``values``.
+    Meant for :func:`octant_mirror_hop`; L-BFGS via optax as in
+    :func:`map_fit`, one compiled solver reused for every value.
+    """
+    import numpy as np
+    import optax
+
+    z_start = jnp.asarray(z_start)
+    values = np.asarray(values, dtype=float)
+    n_free = z_start.shape[0]
+    others = jnp.asarray([i for i in range(n_free) if i != index])
+
+    def full(zo, v):
+        return jnp.zeros(n_free, z_start.dtype).at[others].set(zo).at[index].set(v)
+
+    def neg(zo, v):
+        return -logdensity(full(zo, v))
+
+    solver = optax.lbfgs()
+
+    @jax.jit
+    def solve(zo0, v):
+        f = lambda zo: neg(zo, v)  # noqa: E731
+        value_and_grad = optax.value_and_grad_from_state(f)
+
+        def body(carry, _):
+            zo, st = carry
+            val, g = value_and_grad(zo, state=st)
+            upd, st = solver.update(g, st, zo, value=val, grad=g, value_fn=f)
+            return (optax.apply_updates(zo, upd), st), None
+
+        (zo, _), _ = jax.lax.scan(body, (zo0, solver.init(zo0)), None, length=n_steps)
+        return zo, -f(zo)
+
+    order = np.argsort(np.abs(values - float(z_start[index])))
+    modes = [None] * len(values)
+    lds = [None] * len(values)
+    done = []
+    for k in order:
+        j = min(done, key=lambda j: abs(values[j] - values[k])) if done else None
+        zo0 = z_start[others] if j is None else modes[j][others]
+        zo, ld = solve(zo0, values[k])
+        modes[k], lds[k] = full(zo, values[k]), ld
+        done.append(k)
+    return jnp.stack(modes), jnp.stack(lds)
+
+
+def octant_mirror_hop(index: int, grid, modes) -> Callable[[Array], Array]:
+    """Octant hop that follows the posterior ridge: an involution
+    ``z -> (-z_i, z_o - g(z_i) + g(-z_i))`` for the mixing-angle coordinate
+    ``i = index`` and all other coordinates ``z_o``.
+
+    ``g`` interpolates (piecewise-linearly, clamped outside ``grid``) the
+    conditional modes of the other coordinates as a function of ``z_i``,
+    e.g. ``modes`` from :func:`conditional_modes` on a ``grid`` that covers
+    both octants. With a bounded angle on a symmetric interval (the
+    ``(0, pi/2)`` or ``(0, 1)`` bijector), ``z_i -> -z_i`` is the exact
+    octant mirror, and the shift moves the other coordinates from the ridge
+    point of this ``z_i`` to the ridge point of the mirrored one, so a point
+    on the ridge lands on the ridge. The default reflection
+    (``hop_indices=(index,)``) is the special case ``g = const``.
+
+    Valid for any ``g`` (applying it twice gives back ``z``; the Jacobian is
+    block-triangular with determinant -1), so a poor ``grid`` only lowers
+    the hop acceptance and cannot bias the posterior. Pass the result as
+    ``run_mcmc(..., hop_prob=p, hop_move_fn=octant_mirror_hop(...))``.
+    """
+    grid = jnp.asarray(grid, dtype=float)
+    modes = jnp.asarray(modes, dtype=float)
+    order = jnp.argsort(grid)
+    grid, modes = grid[order], modes[order]
+    modes = modes.at[:, index].set(0.0)
+
+    def g(t):
+        return jax.vmap(lambda col: jnp.interp(t, grid, col), in_axes=1)(modes)
+
+    def hop(z):
+        zi = z[index]
+        shifted = z - g(zi) + g(-zi)
+        return shifted.at[index].set(-zi)
+
+    return hop
 
 
 def laplace_covariance(logdensity: Callable[[Array], Array], z_map: Array) -> Array:
