@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 import jax
+import numpy as np
 import jax.numpy as jnp
 import blackjax
 from blackjax.adaptation.step_size import dual_averaging_adaptation
@@ -188,7 +189,8 @@ def _maybe_wrap_progress(body_fn, n_outer, progress):
     return scan_tqdm(n_outer)(body_fn)
 
 
-def _thinned_scan(step_fn, state, keys_flat, n_samples, thinning, info_spec, progress):
+def _thinned_scan(step_fn, state, keys_flat, n_samples, thinning, info_spec, progress,
+                  return_state=False):
     """Run ``n_samples * thinning`` kernel steps, keeping only every
     ``thinning``-th draw. Implemented as an outer scan of length
     ``n_samples`` whose body runs an inner scan of length ``thinning`` and
@@ -196,6 +198,10 @@ def _thinned_scan(step_fn, state, keys_flat, n_samples, thinning, info_spec, pro
     intermediate (discarded) positions are never materialized outside the
     inner scan, so memory scales with ``n_samples`` not
     ``n_samples * thinning``.
+
+    ``return_state=True`` also returns the final kernel state, first, so a
+    monitored run (``run_mcmc(monitor=...)``) can continue the chain chunk by
+    chunk with the remaining keys.
     """
     keys = keys_flat.reshape(n_samples, thinning, keys_flat.shape[-1])
 
@@ -212,10 +218,55 @@ def _thinned_scan(step_fn, state, keys_flat, n_samples, thinning, info_spec, pro
 
     outer = _maybe_wrap_progress(outer, n_samples, progress)
 
-    _, (positions, log_prob, infos) = jax.lax.scan(
+    state, (positions, log_prob, infos) = jax.lax.scan(
         outer, state, (jnp.arange(n_samples), keys)
     )
+    if return_state:
+        return state, (positions, log_prob, infos)
     return positions, log_prob, infos
+
+
+def _chain_keys(sample_keys, n_samples, thinning):
+    """The per-chain sampling keys exactly as ``run_one`` splits them
+    (``jax.random.split(k, n_samples * thinning)`` for each chain)."""
+    return jax.vmap(lambda k: jax.random.split(k, n_samples * thinning))(sample_keys)
+
+
+def _sample_in_chunks(run_chunk, states, keys_all, n_samples, thinning, monitor):
+    """Sampling phase of a monitored run: ``run_chunk(states, keys_chunk) ->
+    (states, (positions, log_prob, infos))`` advances every chain by one chunk
+    of ``monitor.every`` stored draws (the last chunk may be shorter), using
+    the next slice of the keys an uninterrupted run would use. Each chunk is
+    copied to the host and handed to ``monitor.update``; the concatenation is
+    returned as the run's draws."""
+    pos_l, lp_l, info_l = [], [], []
+    done = 0
+    try:
+        while done < n_samples:
+            m = min(int(monitor.every), n_samples - done)
+            keys_chunk = keys_all[:, done * thinning:(done + m) * thinning]
+            states, out = run_chunk(states, keys_chunk)
+            positions, log_prob, infos = jax.device_get(out)
+            monitor.update(positions, log_prob, infos)
+            pos_l.append(positions)
+            lp_l.append(log_prob)
+            info_l.append(infos)
+            done += m
+    finally:
+        monitor.finish(complete=done >= n_samples)
+    infos = {k: jnp.asarray(np.concatenate([d[k] for d in info_l], axis=1)) for k in info_l[0]}
+    return (jnp.asarray(np.concatenate(pos_l, axis=1)),
+            jnp.asarray(np.concatenate(lp_l, axis=1)), infos)
+
+
+def _check_monitor(monitor, n_samples):
+    for attr in ("every", "start", "update", "finish"):
+        if not hasattr(monitor, attr):
+            raise TypeError(f"monitor must be a bananafit.monitor.RunMonitor (missing {attr!r}).")
+    if int(monitor.every) < 1:
+        raise ValueError(f"monitor.every must be >= 1, got {monitor.every}.")
+    if n_samples < 1:
+        raise ValueError("a monitored run needs n_samples >= 1.")
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +429,9 @@ def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup
                          n_samples, key, thinning, progress,
                          inverse_mass_matrix=None, step_size=None, warmup="window",
                          max_num_doublings=None, target_acceptance_rate=None,
-                         hop_prob=0.0, hop_fn=None, shared_step_size=None):
+                         hop_prob=0.0, hop_fn=None, shared_step_size=None, monitor=None):
+    if monitor is not None:
+        _check_monitor(monitor, n_samples)
     if warmup not in _WARMUP_MODES:
         raise ValueError(f"warmup must be one of {_WARMUP_MODES}, got {warmup!r}")
     pooled_ok = warmup == "step-size" and algorithm in ("nuts", "hmc")
@@ -574,7 +627,23 @@ def _run_gradient_based(logdensity, chain_init, *, algorithm, n_chains, n_warmup
             step_fn, state, keys_flat, n_samples, thinning, info_spec, progress
         )
 
-    positions, log_prob, infos = jax.vmap(run_one)(states, tuned, sample_keys)
+    if monitor is None:
+        positions, log_prob, infos = jax.vmap(run_one)(states, tuned, sample_keys)
+    else:
+        def chunk_one(state, tuned_i, keys_chunk):
+            step_fn = make_step(tuned_i)
+            if hop_fn is not None:
+                step_fn = _with_hop(step_fn, logdensity, hop_prob, hop_fn)
+            m = keys_chunk.shape[0] // thinning
+            return _thinned_scan(step_fn, state, keys_chunk, m, thinning, info_spec, False,
+                                 return_state=True)
+
+        chunk_jit = jax.jit(jax.vmap(chunk_one))
+        monitor.start(algorithm=algorithm, n_chains=n_chains, n_samples=n_samples,
+                      thinning=thinning, n_free=chain_init.shape[-1], tuned=jax.device_get(tuned))
+        positions, log_prob, infos = _sample_in_chunks(
+            lambda st, kc: chunk_jit(st, tuned, kc), states,
+            _chain_keys(sample_keys, n_samples, thinning), n_samples, thinning, monitor)
 
     if algorithm in ("nuts", "hmc"):
         n_divergent = int(jnp.sum(infos["is_divergent"]))
@@ -1028,8 +1097,19 @@ def _rwm_run_compiled(dyn, chain_init, warm_keys, sample_keys, *, cfg):
     keys, same order as the eager version."""
     init_fn, step_fn = _rwm_kernel_from_config(cfg.logdensity, cfg.kernel, dyn)
     info_spec = dict(cfg.info_spec)
-    n_warmup, n_samples, thinning = cfg.n_warmup, cfg.n_samples, cfg.thinning
+    n_samples, thinning = cfg.n_samples, cfg.thinning
+    states = _rwm_burn_in(init_fn, step_fn, cfg.n_warmup, warm_keys, chain_init)
 
+    def run_one(state, k):
+        keys_flat = jax.random.split(k, n_samples * thinning)
+        return _thinned_scan(
+            step_fn, state, keys_flat, n_samples, thinning, info_spec, cfg.progress
+        )
+
+    return jax.vmap(run_one)(states, sample_keys)
+
+
+def _rwm_burn_in(init_fn, step_fn, n_warmup, warm_keys, chain_init):
     def burn_in(k, x0):
         state = init_fn(x0)
         keys = jax.random.split(k, n_warmup)
@@ -1041,20 +1121,38 @@ def _rwm_run_compiled(dyn, chain_init, warm_keys, sample_keys, *, cfg):
         state, _ = jax.lax.scan(body, state, keys)
         return state
 
-    states = jax.vmap(burn_in)(warm_keys, chain_init)
+    return jax.vmap(burn_in)(warm_keys, chain_init)
 
-    def run_one(state, k):
-        keys_flat = jax.random.split(k, n_samples * thinning)
-        return _thinned_scan(
-            step_fn, state, keys_flat, n_samples, thinning, info_spec, cfg.progress
-        )
 
-    return jax.vmap(run_one)(states, sample_keys)
+@functools.partial(jax.jit, static_argnames=("cfg",))
+def _rwm_burn_in_compiled(dyn, chain_init, warm_keys, *, cfg):
+    """Burn-in only, for a monitored run (the sampling then goes chunk by
+    chunk through :func:`_rwm_chunk_compiled`)."""
+    init_fn, step_fn = _rwm_kernel_from_config(cfg.logdensity, cfg.kernel, dyn)
+    return _rwm_burn_in(init_fn, step_fn, cfg.n_warmup, warm_keys, chain_init)
+
+
+@functools.partial(jax.jit, static_argnames=("cfg",))
+def _rwm_chunk_compiled(dyn, states, keys_chunk, *, cfg):
+    """One chunk of thinned sampling for all chains, from ``states``; returns
+    the new states and the chunk's draws. The chunk length is
+    ``keys_chunk.shape[1] // cfg.thinning`` (shapes are static under jit)."""
+    _, step_fn = _rwm_kernel_from_config(cfg.logdensity, cfg.kernel, dyn)
+    m = keys_chunk.shape[1] // cfg.thinning
+
+    def one(state, kc):
+        return _thinned_scan(step_fn, state, kc, m, cfg.thinning, dict(cfg.info_spec), False,
+                             return_state=True)
+
+    return jax.vmap(one)(states, keys_chunk)
 
 
 def _run_rwm(logdensity, chain_init, *, n_chains, n_warmup, n_samples, key,
              thinning, progress, proposal_cov, step_scale, n_free,
-             hop_prob=0.0, hop_indices=None, hop_move_fn=None, block_moves=None):
+             hop_prob=0.0, hop_indices=None, hop_move_fn=None, block_moves=None,
+             monitor=None):
+    if monitor is not None:
+        _check_monitor(monitor, n_samples)
     if proposal_cov is None:
         raise ValueError(
             "algorithm='rwm' requires proposal_cov (a user-supplied matrix, a "
@@ -1178,8 +1276,16 @@ def _run_rwm(logdensity, chain_init, *, n_chains, n_warmup, n_samples, key,
         n_samples=int(n_samples), thinning=int(thinning), progress=bool(progress),
         info_spec=tuple(info_spec.items()),
     )
-    positions, log_prob, infos = _rwm_run_compiled(
-        dyn, chain_init, warm_keys, sample_keys, cfg=cfg)
+    if monitor is None:
+        positions, log_prob, infos = _rwm_run_compiled(
+            dyn, chain_init, warm_keys, sample_keys, cfg=cfg)
+    else:
+        states = _rwm_burn_in_compiled(dyn, chain_init, warm_keys, cfg=cfg)
+        monitor.start(algorithm="rwm", n_chains=n_chains, n_samples=n_samples, thinning=thinning,
+                      n_free=n_free, tuned={"proposal_cov": np.asarray(sigma)})
+        positions, log_prob, infos = _sample_in_chunks(
+            lambda st, kc: _rwm_chunk_compiled(dyn, st, kc, cfg=cfg), states,
+            _chain_keys(sample_keys, n_samples, thinning), n_samples, thinning, monitor)
 
     mean_acc = float(jnp.mean(infos["acceptance_rate"]))
     if mean_acc < 0.01 or mean_acc > 0.5:
@@ -1254,6 +1360,7 @@ def run_mcmc(
     max_num_doublings: int | None = None,
     target_acceptance_rate: float | None = None,
     shared_step_size: bool | None = None,
+    monitor=None,
 ) -> MCMCRun:
     """Run multi-chain MCMC on ``logdensity`` (a scalar function of a
     ``(n_free,)`` z-space vector) and return an :class:`MCMCRun`.
@@ -1457,6 +1564,16 @@ def run_mcmc(
         recipe), off otherwise. ``False`` restores one step size per chain
         (the behaviour before v0.3.0); ``True`` with any other algorithm or
         warmup raises.
+    monitor:
+        a :class:`bananafit.monitor.RunMonitor` to follow the run while it
+        goes: the sampling phase then runs in chunks of ``monitor.every``
+        stored draws, and after each chunk the draws and a summary are
+        written to ``monitor.directory`` (watch it with
+        ``python -m bananafit.monitor <directory>``). The draws are the same
+        as without a monitor (same keys, same kernel, the state carried from
+        one chunk to the next); each chunk boundary costs one device-to-host
+        copy. ``progress`` is ignored when a monitor is given. Default
+        ``None``: one uninterrupted run, as before v0.3.2.
 
     Compiled-program cache (``algorithm="rwm"``): burn-in + sampling run as one
     jitted program, cached on the log-density callable and the static settings
@@ -1504,6 +1621,7 @@ def run_mcmc(
             hop_indices=hop_indices,
             hop_move_fn=hop_move_fn,
             block_moves=block_moves,
+            monitor=monitor,
         )
     elif block_moves:
         raise ValueError(
@@ -1538,6 +1656,7 @@ def run_mcmc(
         hop_prob=hop_prob,
         hop_fn=hop_fn,
         shared_step_size=shared_step_size,
+        monitor=monitor,
     )
 
 

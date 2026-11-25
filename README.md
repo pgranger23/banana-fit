@@ -333,6 +333,41 @@ with the ESS, MCSE and R-hat of the indicator θ₂₃ > π/4 (the quantity that
 mixes slowest when the octant is in question), and `lockstep_efficiency(run)`
 the mean over the slowest chain's leapfrog count per NUTS step.
 
+### Following a run live
+
+Pass a `RunMonitor` to `run_mcmc`, then watch the run from another terminal:
+
+```python
+from bananafit.monitor import RunMonitor, octant_fraction
+
+mon = RunMonitor("runs/fit1", every=500, parameter_set=ps,
+                 watch=["theta23", "dm31", "deltacp"],
+                 derived={"P(upper octant)": octant_fraction(ps)})
+run = run_mcmc(post.logdensity, z0, ..., monitor=mon)
+```
+
+```bash
+python -m bananafit.monitor runs/fit1            # live page at http://127.0.0.1:8765/
+python -m bananafit.monitor runs/fit1 --text     # the same summary in the terminal
+python -m bananafit.monitor runs/fit1 --html snapshot.html   # static copy, opens offline
+```
+
+- **How it samples.** With a monitor, the sampling phase runs in chunks of `every` stored draws
+  per chain. The draws are those of an unmonitored run (bit for bit in the CPU tests): same
+  keys, same kernel, and the state is carried from one chunk to the next. Each chunk boundary costs one device-to-host
+  copy, so keep a chunk at least tens of seconds long.
+- **What it writes,** after each chunk:
+  - the chunk's draws, in `chunks/`; a run that is killed keeps everything up to its last chunk;
+  - `summary.json`: progress, time left, running means and widths, R-hat and ESS of every
+    parameter, the derived quantities with their Monte Carlo errors, and per-chunk sampler
+    statistics (acceptance, divergences, leapfrog steps, hop acceptance);
+  - `trace.json`: thinned traces of the watched parameters and of the log density.
+- **What the page shows:** the progress, the derived quantities with ±2 Monte Carlo error
+  bands, R-hat and ESS over time, the sampler statistics, the traces, and a sortable table of
+  every parameter. It is one HTML file with no external resources.
+- **On a cluster node:** open an ssh tunnel to the port (`ssh -L 8765:localhost:8765 node`), or
+  copy the run directory back and point the viewer at the copy.
+
 ---
 
 ## Validation

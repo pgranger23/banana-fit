@@ -13,7 +13,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 from .events import EventSample, make_sample, make_sample_prebinned
 from .splines import SplineTable, build_spline_table

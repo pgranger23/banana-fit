@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "banana-fit"
-version = "0.3.1"
+version = "0.3.2"
 description = "BANANA (Bayesian Autodiff Neutrino Analysis & Nuisance Assessment): differentiable MCMC fitter for neutrino oscillation analyses in JAX (event samples + spline systematics + blackjax samplers)"
 readme = "README.md"
 license = { text = "MIT" }
