@@ -85,7 +85,8 @@ finds about 35% of the posterior in the lower octant, with no second maximum:
 | NUTS + `octant_mirror_hop` + shared step size | 0.342 ± 0.007 | 3.5 |
 
 On this 17-parameter posterior the random walk with the hop is about 90 times faster than
-the best NUTS setup. Both sampler families share one driver and one tuned proposal source,
+the best NUTS setup. The NUTS rows were measured with v0.3.0, whose step-size warmup was fixed in
+v0.3.1 (see [Samplers](#samplers)); they were not rerun. Both sampler families share one driver and one tuned proposal source,
 so switching between them is a one-argument change.
 
 ---
@@ -308,7 +309,12 @@ Warmup modes for the gradient-based kernels (`warmup=`):
   (`shared_step_size`, on by default here): vmapped chains advance in
   lockstep, so every NUTS step costs the longest trajectory among them, and
   one chain with a small step size would set the cost for all.
-  `shared_step_size=False` restores one step size per chain.
+  `shared_step_size=False` restores one step size per chain. Since v0.3.1
+  the warmup steps run at the dual-averaging iterate and the average is kept
+  for sampling, as in blackjax's own window adaptation; before, every warmup
+  step ran at the average, so the tuned step size varied between runs and
+  missed the target acceptance rate. `n_warmup=0` keeps the `step_size`
+  you pass.
 - `"none"` — no adaptation; both step size and mass matrix must be supplied.
 
 `laplace_seeded_nuts(logdensity, z0, ...)` chains `map_fit` → `laplace_covariance`

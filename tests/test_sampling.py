@@ -1650,3 +1650,47 @@ def test_shared_step_size_gives_one_step_size_for_all_chains(map_and_cov):
         warnings.simplefilter("ignore", RuntimeWarning)  # divergences of a 20-step warmup
         run_mcmc(logdensity, z_map, **{**short, "warmup": "window"})
         run_mcmc(logdensity, z_map, **{**mala_kw, "algorithm": "mala"})
+
+
+# --- v0.3.1: dual-averaging warmup runs at the current iterate; zero warmup keeps the given step size ---
+
+
+@pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
+def test_step_size_warmup_with_no_steps_keeps_the_given_step_size(map_and_cov, algorithm):
+    z_map, _ld_map, cov = map_and_cov
+    run = run_mcmc(
+        logdensity, z_map, algorithm=algorithm, n_chains=2, n_warmup=0, n_samples=3,
+        seed=0, inverse_mass_matrix=cov, warmup="step-size", step_size=0.3,
+    )
+    np.testing.assert_allclose(np.asarray(run.tuned["step_size"]), 0.3)
+
+
+def test_mala_warmup_with_no_steps_keeps_the_given_step_size():
+    run = run_mcmc(logdensity, INIT, algorithm="mala", n_chains=2, n_warmup=0, n_samples=3,
+                   seed=0, step_size=0.3)
+    np.testing.assert_allclose(np.asarray(run.tuned["step_size"]), 0.3)
+
+
+def test_step_size_warmup_reaches_the_target_acceptance_rate():
+    # Correlated 20-d Gaussian with a diagonal (mismatched) metric. Before v0.3.1 every warmup step ran
+    # at the running average of the step size, which lagged behind the dual-averaging iterate: the tuned
+    # step size varied from seed to seed and the sampling acceptance missed 0.8 (0.71 on a 50-d version
+    # of this test). With the iterate it lands within a few percent of the target for every seed.
+    d = 20
+    rng = np.random.default_rng(1)
+    a = rng.normal(size=(d, d))
+    cov = a @ a.T / d + np.diag(np.linspace(0.1, 3.0, d))
+    prec = jnp.asarray(np.linalg.inv(cov))
+
+    def ld(z):
+        return -0.5 * z @ prec @ z
+
+    accs, steps = [], []
+    for seed in range(3):
+        run = run_mcmc(ld, jnp.zeros(d), algorithm="nuts", n_chains=4, n_warmup=150, n_samples=150,
+                       seed=seed, inverse_mass_matrix=jnp.asarray(np.diag(cov)), warmup="step-size",
+                       step_size=0.05)
+        accs.append(float(np.mean(np.asarray(run.info["acceptance_rate"]))))
+        steps.append(float(np.asarray(run.tuned["step_size"]).ravel()[0]))
+    assert all(0.74 < x < 0.88 for x in accs), accs
+    assert np.std(steps) < 0.1 * np.mean(steps), steps
