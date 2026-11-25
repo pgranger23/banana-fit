@@ -241,6 +241,26 @@ _NUTS_INFO_SPEC = {
 _MALA_INFO_SPEC = {"acceptance_rate": "mean", "is_accepted": "mean"}
 
 
+def _dual_averaged_step_size(da_final, da_state, n_warmup, initial_step_size):
+    """Step size at the end of a dual-averaging warmup.
+
+    The warmup steps run at the current iterate ``exp(log_step_size)``, and
+    the step size kept for sampling is the running average
+    ``exp(log_step_size_avg)`` (Hoffman & Gelman 2014, Algorithm 5; blackjax's
+    ``window_adaptation`` does the same). Before v0.3.1 every warmup step ran
+    at the running average, which starts at ``exp(0) = 1`` whatever the
+    initial step size, and lags behind the iterate. The tuned step size then
+    varied from run to run and missed the target acceptance rate (0.71 instead
+    of 0.80 on a 50-dimensional Gaussian after 200 steps).
+
+    With ``n_warmup == 0`` nothing was adapted, so the initial step size is
+    returned (before v0.3.1 this returned 1.0 and ignored ``step_size``).
+    """
+    if n_warmup == 0:
+        return jnp.asarray(initial_step_size, dtype=float)
+    return da_final(da_state)
+
+
 def _mala_warmup(logdensity, key, x0, n_warmup, target=_MALA_TARGET_ACCEPT,
                   initial_step_size=1.0):
     """Step-size-only warmup for MALA via dual averaging.
@@ -267,14 +287,14 @@ def _mala_warmup(logdensity, key, x0, n_warmup, target=_MALA_TARGET_ACCEPT,
 
     def body(carry, k):
         state, da_state = carry
-        step_size = da_final(da_state)
+        step_size = jnp.exp(da_state.log_step_size)  # the current iterate (see _dual_averaged_step_size)
         state, info = kernel(k, state, logdensity, step_size)
         da_state = da_update(da_state, info.acceptance_rate)
         return (state, da_state), None
 
     keys = jax.random.split(key, n_warmup)
     (state, da_state), _ = jax.lax.scan(body, (state, da_state), keys)
-    return state, {"step_size": da_final(da_state)}
+    return state, {"step_size": _dual_averaged_step_size(da_final, da_state, n_warmup, initial_step_size)}
 
 
 def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kwargs,
@@ -305,7 +325,7 @@ def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kw
 
     def body(carry, k):
         state, da_state = carry
-        step_size = da_final(da_state)
+        step_size = jnp.exp(da_state.log_step_size)  # the current iterate (see _dual_averaged_step_size)
         state, info = kernel(
             k, state, logdensity, step_size, inverse_mass_matrix, **extra_kwargs
         )
@@ -317,7 +337,7 @@ def _hmc_family_step_size_warmup(logdensity, key, x0, n_warmup, kernel, extra_kw
 
     keys = jax.random.split(key, n_warmup)
     (state, da_state), _ = jax.lax.scan(body, (state, da_state), keys)
-    return state, da_final(da_state)
+    return state, _dual_averaged_step_size(da_final, da_state, n_warmup, initial_step_size)
 
 
 def _with_hop(step_fn, logdensity, hop_prob, hop_fn):
